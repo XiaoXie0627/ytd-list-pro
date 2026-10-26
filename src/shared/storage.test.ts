@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { addCategory, createEmptyState } from "./state";
+import { UNCATEGORIZED_ID } from "./constants";
+import { addCategory, createEmptyState, getChannelsForCategory } from "./state";
 import type { LegacyImportData } from "./types";
 import {
   activateAccount,
@@ -79,6 +80,48 @@ describe("storage helpers", () => {
     };
 
     await expect(loadState(storage)).resolves.toEqual(createEmptyState());
+  });
+
+  it("migrates a v1 state (explicit uncategorized bucket) to memberships on load", async () => {
+    const v1State = {
+      schemaVersion: 1,
+      channels: {
+        "UC-a": { id: "UC-a", name: "A", url: "https://www.youtube.com/channel/UC-a" },
+        "UC-b": { id: "UC-b", name: "B", url: "https://www.youtube.com/channel/UC-b" }
+      },
+      categories: {
+        uncategorized: {
+          id: "uncategorized",
+          name: "未分类",
+          color: "#737373",
+          icon: "default",
+          channelIds: [],
+          isSystem: true
+        },
+        "cat-dev": { id: "cat-dev", name: "Dev", color: "#111111", icon: "code", channelIds: ["UC-a"] }
+      },
+      categoryOrder: ["cat-dev"],
+      uncategorizedChannelIds: ["UC-b"],
+      ui: { sidebarMode: "categorized", expandedCategoryIds: ["uncategorized"] },
+      importedLegacyData: true,
+      lastSyncedAt: 42
+    };
+    const storage = createMemoryStorageArea({ [STORAGE_STATE_KEY]: v1State });
+
+    const state = await loadState(storage);
+
+    expect(state.schemaVersion).toBe(2);
+    expect(state.memberships).toEqual({ "UC-a": ["cat-dev"] });
+    expect(getChannelsForCategory(state, "cat-dev").map((item) => item.id)).toEqual(["UC-a"]);
+    expect(getChannelsForCategory(state, UNCATEGORIZED_ID).map((item) => item.id)).toEqual(["UC-b"]);
+    expect(state.categories["cat-dev"]?.channelIds).toEqual(["UC-a"]);
+    expect(state.lastSyncedAt).toBe(42);
+
+    // The migrated v2 state is persisted so later loads skip migration.
+    const stored = await storage.get(STORAGE_STATE_KEY);
+    expect(stored[STORAGE_STATE_KEY]).toEqual(state);
+    const reloaded = await loadState(storage);
+    expect(reloaded).toEqual(state);
   });
 });
 

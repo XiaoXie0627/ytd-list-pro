@@ -1,5 +1,5 @@
 import { UNCATEGORIZED_ID } from "../shared/constants";
-import { findChannelByIdOrHandle, getChannelCategoryId } from "../shared/state";
+import { findChannelByIdOrHandle, getChannelCategoryIds } from "../shared/state";
 import type { Channel, ExtensionState } from "../shared/types";
 import { channelFromUrl } from "../shared/youtube-parser";
 import { createSvgIcon } from "./sidebar";
@@ -7,7 +7,8 @@ import { createSvgIcon } from "./sidebar";
 export const QUICK_ADD_ROOT_ID = "ytdlp-quick-add";
 
 export type QuickAddHandlers = {
-  onAssign(channel: Channel, categoryId: string): void;
+  // Toggle: joining a category the channel is not in, leaving one it is in.
+  onToggleCategory(channel: Channel, categoryId: string): void;
   onOpenManager(): void;
 };
 
@@ -61,7 +62,7 @@ export const quickAddSignature = (state: ExtensionState, pageChannel: Channel): 
   const channelId = existing?.id ?? pageChannel.id;
   return JSON.stringify({
     channel: channelId,
-    assigned: getChannelCategoryId(state, channelId),
+    assigned: getChannelCategoryIds(state, channelId),
     categories: [UNCATEGORIZED_ID, ...state.categoryOrder].map((id) => {
       const category = state.categories[id];
       return category ? [category.id, category.name, category.color, category.icon] : undefined;
@@ -88,19 +89,31 @@ export function renderQuickAdd(
 
   const existing = findChannelByIdOrHandle(state, pageChannel.id, pageChannel.handle);
   const channelId = existing?.id ?? pageChannel.id;
-  const assignedCategoryId = getChannelCategoryId(state, channelId);
-  const assignedCategory =
-    assignedCategoryId && assignedCategoryId !== UNCATEGORIZED_ID ? state.categories[assignedCategoryId] : undefined;
+  const assignedCategoryIds = getChannelCategoryIds(state, channelId).filter((id) => id !== UNCATEGORIZED_ID);
+  const assignedCategories = assignedCategoryIds
+    .map((id) => state.categories[id])
+    .filter((category): category is NonNullable<typeof category> => Boolean(category));
 
   const button = document.createElement("button");
   button.type = "button";
-  button.className = assignedCategory ? "ytdlp-quick-add-button is-assigned" : "ytdlp-quick-add-button";
-  button.title = assignedCategory ? "更改这个频道所属的分类" : "把这个频道加入分类";
-  if (assignedCategory) {
-    button.append(renderMenuIcon(assignedCategory.color, assignedCategory.icon));
-    const label = document.createElement("span");
-    label.textContent = assignedCategory.name;
-    button.append(label);
+  button.className = assignedCategories.length > 0 ? "ytdlp-quick-add-button is-assigned" : "ytdlp-quick-add-button";
+  button.title =
+    assignedCategories.length > 0
+      ? `所属分类：${assignedCategories.map((category) => category.name).join("、")}（点击加入/移除）`
+      : "把这个频道加入分类";
+  if (assignedCategories.length > 0) {
+    assignedCategories.forEach((category, index) => {
+      if (index > 0) {
+        const separator = document.createElement("span");
+        separator.className = "ytdlp-quick-add-sep";
+        separator.textContent = "·";
+        button.append(separator);
+      }
+      button.append(renderMenuIcon(category.color, category.icon));
+      const label = document.createElement("span");
+      label.textContent = category.name;
+      button.append(label);
+    });
   } else {
     const plus = document.createElement("span");
     plus.className = "ytdlp-quick-add-plus";
@@ -138,26 +151,34 @@ export function renderQuickAdd(
     if (!category) {
       continue;
     }
-    const isCurrent = assignedCategoryId === categoryId || (assignedCategoryId === undefined && categoryId === UNCATEGORIZED_ID);
+    const isMember =
+      categoryId === UNCATEGORIZED_ID
+        ? assignedCategoryIds.length === 0
+        : assignedCategoryIds.includes(categoryId);
     const item = document.createElement("button");
     item.type = "button";
-    item.className = isCurrent ? "ytdlp-quick-add-item is-current" : "ytdlp-quick-add-item";
+    item.className = isMember ? "ytdlp-quick-add-item is-current" : "ytdlp-quick-add-item";
+    item.title = isMember ? `点击从「${category.name}」移除` : `点击加入「${category.name}」`;
     item.append(renderMenuIcon(category.color, category.icon));
     const name = document.createElement("span");
     name.className = "ytdlp-quick-add-item-name";
     name.textContent = category.name;
     item.append(name);
-    if (isCurrent) {
+    if (isMember) {
       const check = document.createElement("span");
       check.className = "ytdlp-quick-add-check";
       check.textContent = "✓";
       item.append(check);
     }
+    // Toggle: joining a category the channel is not in, leaving one it is in.
+    // Uncategorized is implicit (zero memberships), so clicking it while
+    // uncategorized is a no-op.
+    const togglingMakesSense = categoryId !== UNCATEGORIZED_ID || !isMember;
     item.addEventListener("click", (event) => {
       event.stopPropagation();
       closeMenu();
-      if (!isCurrent) {
-        handlers.onAssign(pageChannel, categoryId);
+      if (togglingMakesSense) {
+        handlers.onToggleCategory(pageChannel, categoryId);
       }
     });
     menu.append(item);
@@ -252,6 +273,9 @@ export const QUICK_ADD_STYLES = `
 .ytdlp-quick-add-check {
   color: var(--yt-spec-call-to-action, #065fd4);
   font-weight: 700;
+}
+.ytdlp-quick-add-sep {
+  color: var(--yt-spec-text-secondary, #606060);
 }
 .ytdlp-quick-add-cat-icon {
   display: inline-flex;

@@ -23,10 +23,11 @@
 
 - **Subscription sync** — reads the full subscription list of the currently signed-in YouTube account and stores it locally.
 - **Unlimited categories** — create categories with custom names, colors, and icons.
+- **Multi-membership** — a channel can belong to any number of categories at once; the sidebar shows it under every category it belongs to, and removing it from all of them returns it to Uncategorized.
 - **Native sidebar** — categories blend into the YouTube sidebar and can replace the long stock subscription list; switch back anytime.
-- **Quick add** — an "add to category" button appears next to the subscribe button on watch and channel pages; it also shows which category the channel currently belongs to.
-- **Global search** — search across all categories with multiple keywords in any order; results are tagged with their category.
-- **Bulk management** — multi-select, bulk move, drag-and-drop, and flexible sorting in the manager panel.
+- **Quick add** — an "add to category" button appears next to the subscribe button on watch and channel pages; it shows every category the channel currently belongs to — click to join, click again to leave.
+- **Global search** — search across all categories with multiple keywords in any order; results are deduplicated by channel and tagged with all their categories. The search box has a one-click ✕ clear.
+- **Bulk management** — multi-select channels and open a category picker from 添加 (Add) / 移动 (Move): Add ticks several categories at once (keeping existing memberships); Move makes the checked set the final memberships (unchecked ones are removed), with a one-click "remove from all categories" in move mode. Also per-membership removal via row badges, drag-and-drop with drop-target highlights, and flexible sorting.
 - **Multi-account isolation** — each YouTube account keeps its own categories; switching accounts never mixes data. Data from older versions is migrated automatically to the first account used after upgrading.
 - **Import / Export** — export all categories to a CSV file (opens directly in Excel) and bulk-import from CSV.
 - **Local-first** — all state lives in `chrome.storage.local`; there is no backend.
@@ -38,7 +39,7 @@
 Follow steps ①②③ in the screenshot (the extension UI is in Chinese; English equivalents in parentheses):
 
 1. **Open the manager panel** (① in the screenshot) — after installation, a switcher appears at the top of the YouTube sidebar with three buttons: 原始 (Original) / 分类 (Categories) / 管理 (Manage). Click 管理 (Manage) to open the category manager panel.
-2. **Create categories and organize channels** (②) — click 新建 (New) to create your own categories, then tick channels and click 移动 (Move) — or simply drag them — to file them into categories. The search box at the top finds channels across all categories.
+2. **Create categories and organize channels** (②) — click 新建 (New) to create your own categories, then tick channels and click 添加 (Add) or 移动 (Move): a dialog pops up where you tick the target categories before confirming — or simply drag channels onto a category. The search box at the top finds channels across all categories and clears with one click.
 3. **Refresh channels** (③) — on first use, click 刷新频道 (Refresh channels) to pull in your subscriptions. **Whenever you subscribe to a new creator and don't see them in the list, click refresh and they will appear.**
 
 Once organized, switch the left sidebar to 分类 (Categories) mode and click any category to browse its channels — no more scrolling through one long, messy subscription list. There is an even faster way in daily use: on any watch or channel page, an 加入分类 (Add to category) button appears next to the subscribe button — click it and pick a category, no manager panel needed.
@@ -79,10 +80,10 @@ The manager panel toolbar has 导出 (Export) and 导入 (Import) buttons.
 
 Column rules:
 
-- **Category** (required) — the category name. Missing categories are created automatically; the name 未分类 (Uncategorized) routes the channel to the uncategorized list.
+- **Category** (required) — the category name. Missing categories are created automatically; the name 未分类 (Uncategorized) clears the channel's memberships so it lands in the uncategorized list.
 - **Channel Name** (optional) — inferred from the URL when empty, and replaced with the real name on the next subscription refresh.
 - **Channel URL** (required) — both `https://www.youtube.com/@handle` and `https://www.youtube.com/channel/UC...` forms are supported.
-- Channels that already exist (matched by channel ID or handle) are **moved** to the target category rather than duplicated; unrecognized rows are skipped and reported with their line numbers in the status bar.
+- Import is idempotent: channels that already exist (matched by channel ID or handle) are **added** to the target category while keeping their existing memberships — the same channel may appear on several rows to join several categories. Unrecognized rows are skipped and reported with their line numbers in the status bar.
 
 Tip: the safest way to build an import file is to export first and edit that CSV as a template.
 

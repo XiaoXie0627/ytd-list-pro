@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { UNCATEGORIZED_ID as UNCATEGORIZED_MENU_ID } from "../shared/constants";
 import { addCategory, createEmptyState, mergeSubscriptions, moveChannels } from "../shared/state";
 import { findQuickAddAnchor, readPageChannel, renderQuickAdd } from "./quick-add";
 
@@ -28,7 +29,7 @@ const createState = () => {
 };
 
 const handlers = () => ({
-  onAssign: vi.fn(),
+  onToggleCategory: vi.fn(),
   onOpenManager: vi.fn()
 });
 
@@ -118,11 +119,12 @@ describe("renderQuickAdd", () => {
     expect(root.querySelector(".ytdlp-quick-add-button")?.textContent).toContain("加入分类");
   });
 
-  it("assigns the channel to the clicked category", () => {
+  it("toggles membership: clicking is a no-op only while already uncategorized", () => {
     const root = document.createElement("div");
     document.body.append(root);
     const quickAddHandlers = handlers();
-    renderQuickAdd(root, createState(), pageChannel, quickAddHandlers);
+    const unknownChannel = { id: "handle:new", name: "New Channel", handle: "@new", url: "https://www.youtube.com/@new" };
+    renderQuickAdd(root, createState(), unknownChannel, quickAddHandlers);
 
     root.querySelector<HTMLButtonElement>(".ytdlp-quick-add-button")?.click();
     const menu = root.querySelector<HTMLElement>(".ytdlp-quick-add-menu");
@@ -131,8 +133,44 @@ describe("renderQuickAdd", () => {
     const uncategorizedItem = Array.from(root.querySelectorAll<HTMLButtonElement>(".ytdlp-quick-add-item")).find(
       (item) => item.textContent?.includes("未分类")
     );
+    // Uncategorized is implicit: clicking it while uncategorized is a no-op.
     uncategorizedItem?.click();
-    expect(quickAddHandlers.onAssign).toHaveBeenCalledWith(pageChannel, expect.any(String));
+    expect(quickAddHandlers.onToggleCategory).not.toHaveBeenCalled();
+
+    const aiItem = Array.from(root.querySelectorAll<HTMLButtonElement>(".ytdlp-quick-add-item")).find(
+      (item) => item.textContent?.includes("AI")
+    );
+    aiItem?.click();
+    expect(quickAddHandlers.onToggleCategory).toHaveBeenCalledWith(unknownChannel, "cat-ai");
+    root.remove();
+  });
+
+  it("clicking uncategorized on a categorized channel resets its memberships", () => {
+    const root = document.createElement("div");
+    document.body.append(root);
+    const quickAddHandlers = handlers();
+    renderQuickAdd(root, createState(), pageChannel, quickAddHandlers);
+
+    root.querySelector<HTMLButtonElement>(".ytdlp-quick-add-button")?.click();
+    const uncategorizedItem = Array.from(root.querySelectorAll<HTMLButtonElement>(".ytdlp-quick-add-item")).find(
+      (item) => item.textContent?.includes("未分类")
+    );
+    uncategorizedItem?.click();
+    expect(quickAddHandlers.onToggleCategory).toHaveBeenCalledWith(pageChannel, UNCATEGORIZED_MENU_ID);
+    root.remove();
+  });
+
+  it("offers an untouched category as a join, and a joined one as a leave", () => {
+    const root = document.createElement("div");
+    document.body.append(root);
+    renderQuickAdd(root, createState(), pageChannel, handlers());
+
+    const items = Array.from(root.querySelectorAll<HTMLButtonElement>(".ytdlp-quick-add-item"));
+    const aiItem = items.find((item) => item.textContent?.includes("AI"));
+    expect(aiItem?.className).toContain("is-current");
+    expect(aiItem?.title).toContain("移除");
+
+    root.querySelector<HTMLButtonElement>(".ytdlp-quick-add-button")?.click();
     root.remove();
   });
 

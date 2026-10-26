@@ -1,17 +1,27 @@
 import { MESSAGE_TYPES, type CollectSubscriptionsResponse } from "../shared/messages";
 import {
   addCategory,
+  addChannelsToCategory,
   deleteCategory,
+  findChannelByIdOrHandle,
   getChannelsForCategory,
   importChannelsToCategories,
   mergeSubscriptions,
+  moveChannelInCategory,
   moveChannels,
+  nextCategoryColor,
+  removeChannelFromCategory,
   renameCategory,
   reorderCategories,
+  refreshDefaultColors,
   searchAllChannels,
   setCategoryAppearance,
+  setChannelCategories,
+  setManagerLayout,
+  setManagerSortMode,
   setSidebarMode,
   toggleCategoryExpanded,
+  toggleChannelPin,
   upsertChannelToCategory
 } from "../shared/state";
 import {
@@ -24,11 +34,11 @@ import {
   restoreLegacyBackup,
   updateState
 } from "../shared/storage";
-import type { Channel, ChannelSortMode, ExtensionState, SidebarMode } from "../shared/types";
-import { PRESET_COLORS, UNCATEGORIZED_ID } from "../shared/constants";
+import type { Channel, ChannelOrderZone, ChannelSortMode, ExtensionState, ManagerLayout, SidebarMode } from "../shared/types";
+import { UNCATEGORIZED_ID } from "../shared/constants";
 import { buildCategoriesCsv, parseCategoriesCsv } from "../shared/transfer";
 import { parseSubscriptionsFromDocument } from "../shared/youtube-parser";
-import { type CategoryDraft, MANAGER_STYLES, type ManagerUiState, renderManager } from "./manager";
+import { type CategoryDraft, MANAGER_STYLES, type ManagerUiState, type PickerMode, renderManager } from "./manager";
 import {
   findQuickAddAnchor,
   QUICK_ADD_ROOT_ID,
@@ -91,8 +101,7 @@ let managerUi: ManagerUiState = {
   selectedCategoryId: UNCATEGORIZED_ID,
   selectedChannelIds: [],
   search: "",
-  moveTargetId: UNCATEGORIZED_ID,
-  sortMode: "added-desc",
+  sortMode: "manual",
   status: "准备就绪"
 };
 
@@ -207,10 +216,11 @@ const normalizeManagerUi = (state: ExtensionState) => {
   if (!categoryExists(state, managerUi.selectedCategoryId)) {
     managerUi.selectedCategoryId = UNCATEGORIZED_ID;
   }
-  if (!categoryExists(state, managerUi.moveTargetId)) {
-    managerUi.moveTargetId = UNCATEGORIZED_ID;
-  }
   managerUi.selectedChannelIds = managerUi.selectedChannelIds.filter((id) => state.channels[id]);
+  // A picker without a selection has nothing to act on.
+  if (managerUi.picker && managerUi.selectedChannelIds.length === 0) {
+    managerUi.picker = undefined;
+  }
 };
 
 const mountManager = (state: ExtensionState) => {
@@ -223,9 +233,18 @@ const mountManager = (state: ExtensionState) => {
 };
 
 const quickAddHandlers = {
-  onAssign(channel: Channel, categoryId: string) {
+  // Toggle: joining a category the channel is not in, leaving one it is in.
+  onToggleCategory(channel: Channel, categoryId: string) {
     void safeAsync(async () => {
-      currentState = await updateState((state) => upsertChannelToCategory(state, channel, categoryId));
+      currentState = await updateState((state) => {
+        const existing = findChannelByIdOrHandle(state, channel.id, channel.handle);
+        const channelId = existing?.id ?? channel.id;
+        const isMember =
+          categoryId !== UNCATEGORIZED_ID && (state.memberships[channelId] ?? []).includes(categoryId);
+        return isMember
+          ? removeChannelFromCategory(state, channelId, categoryId)
+          : upsertChannelToCategory(state, channel, categoryId);
+      });
       refreshViews(currentState);
     });
   },
@@ -365,6 +384,7 @@ function openManager() {
     await ensureAccountActive();
     currentState = currentState ?? (await loadOrImportInitialState());
     managerOpen = true;
+    managerUi.sortMode = currentState.ui.managerSortMode ?? "manual";
     managerUi.status = "准备就绪";
     managerUi.canRestoreLegacy = await computeCanRestoreLegacy();
     mountManager(currentState);
@@ -401,7 +421,7 @@ const createCategoryFromManager = () => {
     mode: "create",
     id: makeCategoryId(),
     name: "新分类",
-    color: PRESET_COLORS[currentState.categoryOrder.length % PRESET_COLORS.length],
+    color: nextCategoryColor(currentState),
     icon: "default"
   };
   mountManager(currentState);
@@ -432,6 +452,19 @@ const deleteCategoryFromManager = (categoryId: string) => {
     managerUi.selectedCategoryId = UNCATEGORIZED_ID;
     managerUi.selectedChannelIds = [];
     managerUi.draft = managerUi.draft?.id === categoryId ? undefined : managerUi.draft;
+    refreshViews(currentState);
+  });
+};
+
+const refreshColorsFromManager = () => {
+  if (!currentState) {
+    return;
+  }
+  if (!window.confirm("按默认色板顺序重刷全部分类颜色？未分类将保持灰色。")) {
+    return;
+  }
+  void safeAsync(async () => {
+    currentState = await updateState((state) => refreshDefaultColors(state));
     refreshViews(currentState);
   });
 };
@@ -470,13 +503,61 @@ const getVisibleManagerChannels = (state: ExtensionState): Channel[] =>
     ? searchAllChannels(state, managerUi.search).map((hit) => hit.channel)
     : getChannelsForCategory(state, managerUi.selectedCategoryId);
 
-const moveSelectedFromManager = () => {
+let flashClearTimer: number | undefined;
+
+const scheduleFlashClear = (categoryId: string) => {
+  if (flashClearTimer !== undefined) {
+    window.clearTimeout(flashClearTimer);
+  }
+  flashClearTimer = window.setTimeout(() => {
+    flashClearTimer = undefined;
+    if (managerUi.flashCategoryId !== categoryId) {
+      return;
+    }
+    managerUi.flashCategoryId = undefined;
+    if (currentState) {
+      mountManager(currentState);
+    }
+  }, 480);
+};
+
+const closePickerFromManager = () => {
+  managerUi.picker = undefined;
+  if (currentState) {
+    mountManager(currentState);
+  }
+};
+
+const confirmPickerFromManager = (mode: PickerMode, categoryIds: string[]) => {
   if (!currentState || managerUi.selectedChannelIds.length === 0) {
+    closePickerFromManager();
     return;
   }
+  const channelCount = managerUi.selectedChannelIds.length;
   void safeAsync(async () => {
-    currentState = await updateState((state) => moveChannels(state, managerUi.selectedChannelIds, managerUi.moveTargetId));
+    currentState = await updateState((state) =>
+      mode === "add"
+        ? categoryIds.reduce(
+            (accumulated, categoryId) => addChannelsToCategory(accumulated, managerUi.selectedChannelIds, categoryId),
+            state
+          )
+        : setChannelCategories(state, managerUi.selectedChannelIds, categoryIds)
+    );
+    managerUi.picker = undefined;
     managerUi.selectedChannelIds = [];
+    managerUi.status =
+      mode === "add"
+        ? `已添加 ${channelCount} 个频道到 ${categoryIds.length} 个分类`
+        : categoryIds.length > 0
+          ? `已移动 ${channelCount} 个频道`
+          : "已移出所有分类";
+    refreshViews(currentState);
+  });
+};
+
+const removeChannelMembershipFromManager = (channelId: string, categoryId: string) => {
+  void safeAsync(async () => {
+    currentState = await updateState((state) => removeChannelFromCategory(state, channelId, categoryId));
     refreshViews(currentState);
   });
 };
@@ -488,10 +569,12 @@ const dropOnCategoryFromManager = (categoryId: string, event: DragEvent) => {
   }
   const channelId = event.dataTransfer?.getData("application/x-ytdlp-channel");
   if (channelId) {
+    managerUi.flashCategoryId = categoryId;
     void safeAsync(async () => {
       currentState = await updateState((state) => moveChannels(state, [channelId], categoryId));
       managerUi.selectedChannelIds = [];
       refreshViews(currentState);
+      scheduleFlashClear(categoryId);
     });
     return;
   }
@@ -501,6 +584,7 @@ const dropOnCategoryFromManager = (categoryId: string, event: DragEvent) => {
     return;
   }
 
+  managerUi.flashCategoryId = categoryId;
   void safeAsync(async () => {
     currentState = await updateState((state) => {
       const nextOrder = [...state.categoryOrder];
@@ -514,6 +598,7 @@ const dropOnCategoryFromManager = (categoryId: string, event: DragEvent) => {
       return reorderCategories(state, nextOrder);
     });
     refreshViews(currentState);
+    scheduleFlashClear(categoryId);
   });
 };
 
@@ -521,6 +606,7 @@ const managerHandlers = {
   onClose: closeManager,
   onRefresh: refreshFromManager,
   onCreateCategory: createCategoryFromManager,
+  onRefreshColors: refreshColorsFromManager,
   onSelectCategory(categoryId: string) {
     managerUi.selectedCategoryId = categoryId;
     managerUi.selectedChannelIds = [];
@@ -563,13 +649,15 @@ const managerHandlers = {
       mountManager(currentState);
     }
   },
-  onMoveTargetChange(categoryId: string) {
-    managerUi.moveTargetId = categoryId;
+  onOpenPicker(mode: PickerMode) {
+    managerUi.picker = { mode };
     if (currentState) {
       mountManager(currentState);
     }
   },
-  onMoveSelected: moveSelectedFromManager,
+  onClosePicker: closePickerFromManager,
+  onPickerConfirm: confirmPickerFromManager,
+  onRemoveChannelMembership: removeChannelMembershipFromManager,
   onExport() {
     if (!currentState) {
       return;
@@ -649,7 +737,42 @@ const managerHandlers = {
     managerUi.sortMode = sortMode;
     if (currentState) {
       mountManager(currentState);
+      void safeAsync(async () => {
+        currentState = await updateState((state) => setManagerSortMode(state, sortMode));
+      });
     }
+  },
+  onTogglePin(channelId: string) {
+    if (!currentState) {
+      return;
+    }
+    const categoryId = managerUi.selectedCategoryId;
+    const name = currentState.channels[channelId]?.name ?? channelId;
+    void safeAsync(async () => {
+      currentState = await updateState((state) => toggleChannelPin(state, categoryId, channelId));
+      const pinnedNow = currentState.categories[categoryId]?.pinnedChannelIds?.includes(channelId) ?? false;
+      managerUi.status = pinnedNow ? `已置顶「${name}」` : `已取消置顶「${name}」`;
+      refreshViews(currentState);
+    });
+  },
+  onReorderChannel(channelId: string, zone: ChannelOrderZone, index: number) {
+    if (!currentState) {
+      return;
+    }
+    void safeAsync(async () => {
+      currentState = await updateState((state) =>
+        moveChannelInCategory(state, managerUi.selectedCategoryId, channelId, zone, index)
+      );
+      refreshViews(currentState);
+    });
+  },
+  onLayoutChange(layout: Partial<ManagerLayout>) {
+    if (!currentState) {
+      return;
+    }
+    void safeAsync(async () => {
+      currentState = await updateState((state) => setManagerLayout(state, layout));
+    });
   },
   onDragCategoryStart(categoryId: string) {
     draggedCategoryId = categoryId;
@@ -753,6 +876,9 @@ const start = () => {
     }
     if (quickAddTimer !== undefined) {
       window.clearTimeout(quickAddTimer);
+    }
+    if (flashClearTimer !== undefined) {
+      window.clearTimeout(flashClearTimer);
     }
     document.getElementById(ROOT_ID)?.remove();
     document.getElementById(MANAGER_ROOT_ID)?.remove();

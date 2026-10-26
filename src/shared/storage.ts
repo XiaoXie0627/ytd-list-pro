@@ -1,6 +1,7 @@
 import { LEGACY_IMPORT_DATA } from "./legacy-data";
+import { STATE_SCHEMA_VERSION, UNCATEGORIZED_ID } from "./constants";
 import { applyLegacyImportIfNeeded, createEmptyState } from "./state";
-import type { ExtensionState, LegacyImportData } from "./types";
+import type { Category, ExtensionState, LegacyImportData } from "./types";
 
 export const STORAGE_STATE_KEY = "ytdListProState";
 export const STORAGE_ACTIVE_ACCOUNT_KEY = "ytdListProActiveAccount";
@@ -41,8 +42,61 @@ const isExtensionState = (value: unknown): value is ExtensionState => {
     typeof maybeState.channels === "object" &&
     typeof maybeState.categories === "object" &&
     Array.isArray(maybeState.categoryOrder) &&
-    Array.isArray(maybeState.uncategorizedChannelIds)
+    typeof maybeState.memberships === "object" &&
+    maybeState.memberships !== null
   );
+};
+
+// v1 kept an explicit `uncategorizedChannelIds` bucket and had no
+// `memberships` map; each channel lived in at most one bucket.
+const looksLikeLegacyV1State = (value: Record<string, unknown>): boolean =>
+  Array.isArray(value.uncategorizedChannelIds) &&
+  typeof value.memberships !== "object" &&
+  typeof value.channels === "object" &&
+  value.channels !== null &&
+  typeof value.categories === "object" &&
+  value.categories !== null;
+
+/**
+ * v1 -> v2: fold every category's `channelIds` into the `memberships` map
+ * (old data has at most one bucket per channel, so the fold is unambiguous;
+ * if duplicates exist they all become valid memberships). Legacy
+ * "uncategorized" channels end up with zero memberships, which is exactly
+ * what uncategorized means now. The per-category arrays survive as display
+ * order.
+ */
+const migrateLegacyV1State = (raw: Record<string, unknown>): ExtensionState => {
+  const base = createEmptyState();
+  const rawCategories = raw.categories as Record<string, Omit<Category, "channelIds"> & { channelIds?: unknown }>;
+  const categories: Record<string, Category> = {};
+  for (const [id, category] of Object.entries(rawCategories)) {
+    categories[id] = {
+      ...category,
+      channelIds: Array.isArray(category.channelIds) ? [...(category.channelIds as string[])] : []
+    };
+  }
+  const memberships: Record<string, string[]> = {};
+  for (const [categoryId, category] of Object.entries(categories)) {
+    if (categoryId === UNCATEGORIZED_ID) {
+      category.channelIds = [];
+      continue;
+    }
+    for (const channelId of category.channelIds) {
+      memberships[channelId] = [...(memberships[channelId] ?? []), categoryId];
+    }
+  }
+  const lastSyncedAt = raw.lastSyncedAt;
+  return {
+    ...base,
+    schemaVersion: STATE_SCHEMA_VERSION,
+    channels: raw.channels as ExtensionState["channels"],
+    categories,
+    categoryOrder: Array.isArray(raw.categoryOrder) ? [...(raw.categoryOrder as string[])] : [],
+    memberships,
+    ui: (raw.ui as ExtensionState["ui"]) ?? base.ui,
+    importedLegacyData: Boolean(raw.importedLegacyData),
+    ...(typeof lastSyncedAt === "number" ? { lastSyncedAt } : {})
+  };
 };
 
 export function isExtensionContextInvalidated(error: unknown): boolean {
@@ -86,7 +140,15 @@ export async function loadState(storageArea = getChromeStorageArea()): Promise<E
     const key = activeStateStorageKey();
     const result = await storageArea.get(key);
     const state = result[key];
-    return isExtensionState(state) ? state : createEmptyState();
+    if (isExtensionState(state)) {
+      return state;
+    }
+    if (state && typeof state === "object" && looksLikeLegacyV1State(state as Record<string, unknown>)) {
+      const migrated = migrateLegacyV1State(state as Record<string, unknown>);
+      await storageArea.set({ [key]: migrated });
+      return migrated;
+    }
+    return createEmptyState();
   } catch (error) {
     if (isExtensionContextInvalidated(error)) {
       return createEmptyState();

@@ -119,15 +119,16 @@ export const createSvgIcon = (icon: CategoryIconId) => {
 export function buildSidebarSections(state: ExtensionState): SidebarSection[] {
   const expanded = new Set(state.ui.expandedCategoryIds);
   const uncategorized = state.categories[UNCATEGORIZED_ID];
+  const uncategorizedChannels = getChannelsForCategory(state, UNCATEGORIZED_ID);
   const sections: SidebarSection[] = [
     {
       id: UNCATEGORIZED_ID,
       name: uncategorized.name,
       color: uncategorized.color,
       icon: uncategorized.icon,
-      count: state.uncategorizedChannelIds.length,
+      count: uncategorizedChannels.length,
       expanded: expanded.has(UNCATEGORIZED_ID),
-      channels: getChannelsForCategory(state, UNCATEGORIZED_ID)
+      channels: uncategorizedChannels
     }
   ];
 

@@ -6,26 +6,41 @@ import {
   UNCATEGORIZED_ID
 } from "./constants";
 import { normalizeAvatarUrl } from "./avatar";
-import type { Category, CategoryInput, Channel, ExtensionState, LegacyImportData } from "./types";
+import type {
+  Category,
+  CategoryInput,
+  Channel,
+  ChannelOrderZone,
+  ExtensionState,
+  LegacyImportData,
+  ManagerLayout
+} from "./types";
 
 const unique = (items: string[]): string[] => Array.from(new Set(items));
-
-const cloneCategory = (category: Category): Category => ({
-  ...category,
-  channelIds: [...category.channelIds]
-});
 
 const cloneState = (state: ExtensionState): ExtensionState => ({
   ...state,
   channels: { ...state.channels },
   categories: Object.fromEntries(
-    Object.entries(state.categories).map(([id, category]) => [id, cloneCategory(category)])
+    Object.entries(state.categories).map(([id, category]) => [
+      id,
+      {
+        ...category,
+        channelIds: [...category.channelIds],
+        ...(category.pinnedChannelIds ? { pinnedChannelIds: [...category.pinnedChannelIds] } : {}),
+        ...(category.manualChannelIds ? { manualChannelIds: [...category.manualChannelIds] } : {})
+      }
+    ])
   ),
   categoryOrder: [...state.categoryOrder],
-  uncategorizedChannelIds: [...state.uncategorizedChannelIds],
+  memberships: Object.fromEntries(
+    Object.entries(state.memberships).map(([id, categoryIds]) => [id, [...categoryIds]])
+  ),
   ui: {
     sidebarMode: state.ui.sidebarMode,
-    expandedCategoryIds: [...state.ui.expandedCategoryIds]
+    expandedCategoryIds: [...state.ui.expandedCategoryIds],
+    ...(state.ui.managerSortMode === undefined ? {} : { managerSortMode: state.ui.managerSortMode }),
+    ...(state.ui.managerLayout === undefined ? {} : { managerLayout: { ...state.ui.managerLayout } })
   }
 });
 
@@ -78,19 +93,71 @@ const upgradeRecoveredCategoryAppearance = (currentState: ExtensionState): Exten
   return changed ? state : currentState;
 };
 
-const removeChannelsFromAllBuckets = (state: ExtensionState, channelIds: string[]): void => {
-  const moving = new Set(channelIds);
-  for (const category of Object.values(state.categories)) {
-    category.channelIds = category.channelIds.filter((id) => !moving.has(id));
+// ---------------------------------------------------------------------------
+// Membership primitives. `memberships` is the single source of truth; each
+// category's `channelIds` is derived display order kept in lockstep here.
+// ---------------------------------------------------------------------------
+
+const appendToOrder = (state: ExtensionState, categoryId: string, channelId: string): void => {
+  const category = state.categories[categoryId];
+  if (!category || category.channelIds.includes(channelId)) {
+    return;
   }
-  state.uncategorizedChannelIds = state.uncategorizedChannelIds.filter((id) => !moving.has(id));
+  category.channelIds.push(channelId);
 };
 
-const pruneMissingChannels = (state: ExtensionState, existingIds: Set<string>): void => {
-  for (const category of Object.values(state.categories)) {
-    category.channelIds = category.channelIds.filter((id) => existingIds.has(id));
+const removeFromOrder = (state: ExtensionState, categoryId: string, channelId: string): void => {
+  const category = state.categories[categoryId];
+  if (!category) {
+    return;
   }
-  state.uncategorizedChannelIds = state.uncategorizedChannelIds.filter((id) => existingIds.has(id));
+  category.channelIds = category.channelIds.filter((id) => id !== channelId);
+  if (category.pinnedChannelIds) {
+    category.pinnedChannelIds = category.pinnedChannelIds.filter((id) => id !== channelId);
+  }
+  if (category.manualChannelIds) {
+    category.manualChannelIds = category.manualChannelIds.filter((id) => id !== channelId);
+  }
+};
+
+const isRealCategory = (state: ExtensionState, categoryId: string): boolean =>
+  categoryId !== UNCATEGORIZED_ID && Boolean(state.categories[categoryId]);
+
+const addMembership = (state: ExtensionState, channelId: string, categoryId: string): void => {
+  if (!isRealCategory(state, categoryId)) {
+    return;
+  }
+  const current = state.memberships[channelId] ?? [];
+  if (current.includes(categoryId)) {
+    return;
+  }
+  state.memberships[channelId] = [...current, categoryId];
+  appendToOrder(state, categoryId, channelId);
+};
+
+const removeMembership = (state: ExtensionState, channelId: string, categoryId: string): void => {
+  const current = state.memberships[channelId];
+  if (!current?.includes(categoryId)) {
+    return;
+  }
+  const next = current.filter((id) => id !== categoryId);
+  if (next.length === 0) {
+    delete state.memberships[channelId];
+  } else {
+    state.memberships[channelId] = next;
+  }
+  removeFromOrder(state, categoryId, channelId);
+};
+
+const clearMemberships = (state: ExtensionState, channelId: string): void => {
+  const current = state.memberships[channelId];
+  if (!current) {
+    return;
+  }
+  for (const categoryId of current) {
+    removeFromOrder(state, categoryId, channelId);
+  }
+  delete state.memberships[channelId];
 };
 
 export function createEmptyState(): ExtensionState {
@@ -98,13 +165,14 @@ export function createEmptyState(): ExtensionState {
     schemaVersion: STATE_SCHEMA_VERSION,
     channels: {},
     categories: {
-      [UNCATEGORIZED_ID]: cloneCategory(UNCATEGORIZED_CATEGORY)
+      [UNCATEGORIZED_ID]: { ...UNCATEGORIZED_CATEGORY, channelIds: [] }
     },
     categoryOrder: [],
-    uncategorizedChannelIds: [],
+    memberships: {},
     ui: {
       sidebarMode: "categorized",
-      expandedCategoryIds: [UNCATEGORIZED_ID]
+      expandedCategoryIds: [UNCATEGORIZED_ID],
+      managerSortMode: "manual"
     },
     importedLegacyData: false
   };
@@ -133,7 +201,7 @@ export function mergeSubscriptions(
 
   // Channels assigned from a page context may be stored under a fallback
   // `handle:xxx` id; once a full sync provides the canonical channel id,
-  // migrate bucket assignments so the categorization survives.
+  // migrate memberships and ordering so the categorization survives.
   const incomingIdByHandle = new Map(
     channelsWithDiscoveryTimes
       .filter((channel) => channel.handle)
@@ -150,34 +218,67 @@ export function mergeSubscriptions(
       remappedIds.set(oldId, newId);
     }
   }
-  if (remappedIds.size > 0) {
-    for (const category of Object.values(state.categories)) {
-      category.channelIds = unique(category.channelIds.map((id) => remappedIds.get(id) ?? id));
+  for (const [oldId, newId] of remappedIds) {
+    const oldCategoryIds = state.memberships[oldId];
+    if (oldCategoryIds) {
+      delete state.memberships[oldId];
+      for (const categoryId of oldCategoryIds) {
+        addMembership(state, newId, categoryId);
+      }
+    } else {
+      removeFromOrder(state, UNCATEGORIZED_ID, oldId);
     }
-    state.uncategorizedChannelIds = unique(state.uncategorizedChannelIds.map((id) => remappedIds.get(id) ?? id));
+    // Keep manager pin/manual order across the id remap.
+    for (const category of Object.values(state.categories)) {
+      if (category.pinnedChannelIds) {
+        category.pinnedChannelIds = category.pinnedChannelIds.map((id) => (id === oldId ? newId : id));
+      }
+      if (category.manualChannelIds) {
+        category.manualChannelIds = category.manualChannelIds.map((id) => (id === oldId ? newId : id));
+      }
+    }
   }
 
   state.channels = Object.fromEntries(incomingById);
-  pruneMissingChannels(state, incomingIds);
 
-  const assignedIds = new Set<string>();
-  for (const categoryId of state.categoryOrder) {
-    for (const channelId of state.categories[categoryId]?.channelIds ?? []) {
-      assignedIds.add(channelId);
+  // A sync replaces the channel set: drop memberships and ordering of
+  // channels no longer subscribed. Category assignment is preserved for
+  // returning channels; brand-new channels stay uncategorized implicitly.
+  const validCategoryIds = new Set(Object.keys(state.categories));
+  const prunedMemberships: Record<string, string[]> = {};
+  for (const [channelId, categoryIds] of Object.entries(state.memberships)) {
+    if (!incomingIds.has(channelId)) {
+      continue;
+    }
+    const valid = unique(categoryIds).filter((id) => validCategoryIds.has(id));
+    if (valid.length > 0) {
+      prunedMemberships[channelId] = valid;
     }
   }
-  for (const channelId of state.uncategorizedChannelIds) {
-    assignedIds.add(channelId);
-  }
+  state.memberships = prunedMemberships;
 
-  for (const channel of normalizedChannels) {
-    if (!assignedIds.has(channel.id)) {
-      state.uncategorizedChannelIds.push(channel.id);
-      assignedIds.add(channel.id);
+  for (const category of Object.values(state.categories)) {
+    const memberIds = new Set(
+      Object.entries(state.memberships)
+        .filter(([, categoryIds]) => categoryIds.includes(category.id))
+        .map(([channelId]) => channelId)
+    );
+    const kept = category.channelIds.filter((id) => memberIds.has(id));
+    for (const channelId of memberIds) {
+      if (!kept.includes(channelId)) {
+        kept.push(channelId);
+      }
+    }
+    category.channelIds = kept;
+    // Manager order overlays may reference unsubscribed channels; prune them.
+    if (category.pinnedChannelIds) {
+      category.pinnedChannelIds = unique(category.pinnedChannelIds.filter((id) => memberIds.has(id)));
+    }
+    if (category.manualChannelIds) {
+      category.manualChannelIds = unique(category.manualChannelIds.filter((id) => memberIds.has(id)));
     }
   }
 
-  state.uncategorizedChannelIds = unique(state.uncategorizedChannelIds).filter((id) => incomingIds.has(id));
   state.lastSyncedAt = syncedAt;
   return state;
 }
@@ -194,6 +295,37 @@ export function addCategory(currentState: ExtensionState, input: CategoryInput):
   };
   state.categories[category.id] = category;
   state.categoryOrder = unique([...state.categoryOrder.filter((id) => id !== category.id), category.id]);
+  return state;
+}
+
+/**
+ * Default color for a brand-new category: the first preset no category uses
+ * yet, cycling through the palette again only once all ten are taken.
+ */
+export function nextCategoryColor(state: ExtensionState): string {
+  const used = new Set(Object.values(state.categories).map((category) => category.color));
+  const free = PRESET_COLORS.find((color) => !used.has(color));
+  if (free) {
+    return free;
+  }
+  return PRESET_COLORS[state.categoryOrder.length % PRESET_COLORS.length];
+}
+
+/**
+ * Repaints every user category in display order with the preset palette.
+ * System categories keep their dedicated appearance.
+ */
+export function refreshDefaultColors(currentState: ExtensionState): ExtensionState {
+  const state = cloneState(currentState);
+  let index = 0;
+  for (const categoryId of state.categoryOrder) {
+    const category = state.categories[categoryId];
+    if (categoryId === UNCATEGORIZED_ID || !category) {
+      continue;
+    }
+    category.color = PRESET_COLORS[index % PRESET_COLORS.length];
+    index += 1;
+  }
   return state;
 }
 
@@ -219,7 +351,11 @@ export function deleteCategory(currentState: ExtensionState, categoryId: string)
   if (!category) {
     return state;
   }
-  state.uncategorizedChannelIds = unique([...state.uncategorizedChannelIds, ...category.channelIds]);
+  // Members simply lose one membership; channels that end up with zero
+  // memberships become uncategorized implicitly.
+  for (const channelId of Object.keys(state.memberships)) {
+    removeMembership(state, channelId, categoryId);
+  }
   delete state.categories[categoryId];
   state.categoryOrder = state.categoryOrder.filter((id) => id !== categoryId);
   state.ui.expandedCategoryIds = state.ui.expandedCategoryIds.filter((id) => id !== categoryId);
@@ -235,6 +371,7 @@ export function reorderCategories(currentState: ExtensionState, orderedCategoryI
   return state;
 }
 
+/** Move semantics: replace all memberships with the single target category. */
 export function moveChannels(
   currentState: ExtensionState,
   channelIds: string[],
@@ -245,20 +382,203 @@ export function moveChannels(
   if (knownChannelIds.length === 0) {
     return state;
   }
-  if (targetCategoryId !== UNCATEGORIZED_ID && !state.categories[targetCategoryId]) {
+  if (!isRealCategory(state, targetCategoryId) && targetCategoryId !== UNCATEGORIZED_ID) {
     throw new Error(`Category not found: ${targetCategoryId}`);
   }
 
-  removeChannelsFromAllBuckets(state, knownChannelIds);
-
-  if (targetCategoryId === UNCATEGORIZED_ID) {
-    state.uncategorizedChannelIds = unique([...state.uncategorizedChannelIds, ...knownChannelIds]);
-  } else {
-    state.categories[targetCategoryId].channelIds = unique([
-      ...state.categories[targetCategoryId].channelIds,
-      ...knownChannelIds
-    ]);
+  for (const channelId of knownChannelIds) {
+    clearMemberships(state, channelId);
+    if (targetCategoryId !== UNCATEGORIZED_ID) {
+      addMembership(state, channelId, targetCategoryId);
+    }
   }
+  return state;
+}
+
+/** Add semantics: ensure membership in the target, keep existing ones. */
+export function addChannelsToCategory(
+  currentState: ExtensionState,
+  channelIds: string[],
+  targetCategoryId: string
+): ExtensionState {
+  const state = cloneState(currentState);
+  const knownChannelIds = unique(channelIds).filter((id) => state.channels[id]);
+  if (knownChannelIds.length === 0) {
+    return state;
+  }
+  if (!isRealCategory(state, targetCategoryId)) {
+    throw new Error(`Category not found: ${targetCategoryId}`);
+  }
+  for (const channelId of knownChannelIds) {
+    addMembership(state, channelId, targetCategoryId);
+  }
+  return state;
+}
+
+/**
+ * Picker「移动」semantics: every listed channel's memberships become exactly
+ * `categoryIds` (empty = uncategorized). Unknown category ids throw;
+ * duplicates and UNCATEGORIZED_ID entries are ignored. All edits go through
+ * the membership primitives so each category's order overlays stay in sync.
+ */
+export function setChannelCategories(
+  currentState: ExtensionState,
+  channelIds: string[],
+  categoryIds: string[]
+): ExtensionState {
+  const state = cloneState(currentState);
+  const knownChannelIds = unique(channelIds).filter((id) => state.channels[id]);
+  if (knownChannelIds.length === 0) {
+    return state;
+  }
+  const requested = unique(categoryIds).filter((id) => id !== UNCATEGORIZED_ID);
+  for (const categoryId of requested) {
+    if (!isRealCategory(state, categoryId)) {
+      throw new Error(`Category not found: ${categoryId}`);
+    }
+  }
+  for (const channelId of knownChannelIds) {
+    for (const categoryId of state.memberships[channelId] ?? []) {
+      if (!requested.includes(categoryId)) {
+        removeMembership(state, channelId, categoryId);
+      }
+    }
+    for (const categoryId of requested) {
+      addMembership(state, channelId, categoryId);
+    }
+  }
+  return state;
+}
+
+/** Remove a single membership; a channel left with none becomes uncategorized. */
+export function removeChannelFromCategory(
+  currentState: ExtensionState,
+  channelId: string,
+  categoryId: string
+): ExtensionState {
+  const state = cloneState(currentState);
+  if (!isRealCategory(state, categoryId)) {
+    return state;
+  }
+  removeMembership(state, channelId, categoryId);
+  return state;
+}
+
+/**
+ * Pin semantics (manager only, per category): toggling membership in the
+ * pinned block. Pinning appends to the end of the pinned block; unpinning
+ * lets the channel fall back to its manual/join position.
+ */
+export function toggleChannelPin(
+  currentState: ExtensionState,
+  categoryId: string,
+  channelId: string
+): ExtensionState {
+  const state = cloneState(currentState);
+  const category = state.categories[categoryId];
+  if (!isRealCategory(state, categoryId) || !category) {
+    return currentState;
+  }
+  if (!state.memberships[channelId]?.includes(categoryId)) {
+    return currentState;
+  }
+  const pinned = category.pinnedChannelIds ?? [];
+  category.pinnedChannelIds = pinned.includes(channelId)
+    ? pinned.filter((id) => id !== channelId)
+    : [...pinned, channelId];
+  return state;
+}
+
+/**
+ * Manual reorder inside one category. `zone` picks the block ("pinned" or
+ * "normal") and `index` is the target position within that block; channels
+ * never cross zones by dragging — pinning is button-only. `channelIds` (the
+ * sidebar's join order) is deliberately left untouched.
+ */
+export function moveChannelInCategory(
+  currentState: ExtensionState,
+  categoryId: string,
+  channelId: string,
+  zone: ChannelOrderZone,
+  index: number
+): ExtensionState {
+  const state = cloneState(currentState);
+  const category = state.categories[categoryId];
+  if (!isRealCategory(state, categoryId) || !category) {
+    return currentState;
+  }
+  if (!state.memberships[channelId]?.includes(categoryId)) {
+    return currentState;
+  }
+  if (zone === "pinned") {
+    const pinned = unique(category.pinnedChannelIds ?? []);
+    const from = pinned.indexOf(channelId);
+    if (from < 0) {
+      return currentState;
+    }
+    pinned.splice(from, 1);
+    pinned.splice(Math.min(Math.max(index, 0), pinned.length), 0, channelId);
+    category.pinnedChannelIds = pinned;
+    return state;
+  }
+  const pinnedSet = new Set(category.pinnedChannelIds ?? []);
+  if (pinnedSet.has(channelId)) {
+    return currentState;
+  }
+  const source = unique(category.manualChannelIds ?? category.channelIds.filter((id) => !pinnedSet.has(id)));
+  const from = source.indexOf(channelId);
+  if (from < 0) {
+    return currentState;
+  }
+  source.splice(from, 1);
+  source.splice(Math.min(Math.max(index, 0), source.length), 0, channelId);
+  category.manualChannelIds = source;
+  return state;
+}
+
+export interface CategoryChannelView {
+  pinned: Channel[];
+  rest: Channel[];
+}
+
+/**
+ * Manager view of a real category: the pinned block (pin order) plus the
+ * normal section (manual order, falling back to join order). Read-time
+ * repair drops overlay ids that are no longer members.
+ */
+export function getCategoryChannelView(state: ExtensionState, categoryId: string): CategoryChannelView {
+  const category = state.categories[categoryId];
+  if (!category || categoryId === UNCATEGORIZED_ID) {
+    return { pinned: [], rest: [] };
+  }
+  const memberIds = new Set(getChannelsForCategory(state, categoryId).map((channel) => channel.id));
+  const pinnedIds = unique((category.pinnedChannelIds ?? []).filter((id) => memberIds.has(id)));
+  const pinnedSet = new Set(pinnedIds);
+  const restIds = unique(
+    (category.manualChannelIds ?? category.channelIds).filter((id) => memberIds.has(id) && !pinnedSet.has(id))
+  );
+  for (const id of memberIds) {
+    if (!pinnedSet.has(id) && !restIds.includes(id)) {
+      restIds.push(id);
+    }
+  }
+  const toChannels = (ids: string[]): Channel[] =>
+    ids.map((id) => state.channels[id]).filter(Boolean) as Channel[];
+  return { pinned: toChannels(pinnedIds), rest: toChannels(restIds) };
+}
+
+export function setManagerSortMode(
+  currentState: ExtensionState,
+  mode: ExtensionState["ui"]["managerSortMode"]
+): ExtensionState {
+  const state = cloneState(currentState);
+  state.ui.managerSortMode = mode;
+  return state;
+}
+
+export function setManagerLayout(currentState: ExtensionState, layout: Partial<ManagerLayout>): ExtensionState {
+  const state = cloneState(currentState);
+  state.ui.managerLayout = { ...state.ui.managerLayout, ...layout };
   return state;
 }
 
@@ -273,16 +593,35 @@ export function findChannelByIdOrHandle(state: ExtensionState, id: string, handl
   return Object.values(state.channels).find((channel) => channel.handle?.toLocaleLowerCase() === handleKey);
 }
 
-export function getChannelCategoryId(state: ExtensionState, channelId: string): string | undefined {
-  if (state.uncategorizedChannelIds.includes(channelId)) {
-    return UNCATEGORIZED_ID;
+/** All category ids the channel belongs to, ordered like the sidebar. */
+export function getChannelCategoryIds(state: ExtensionState, channelId: string): string[] {
+  const categoryIds = state.memberships[channelId] ?? [];
+  const ordered = state.categoryOrder.filter((id) => categoryIds.includes(id));
+  const rest = categoryIds.filter((id) => !ordered.includes(id));
+  return [...ordered, ...rest];
+}
+
+export function getChannelsForCategory(state: ExtensionState, categoryId: string): Channel[] {
+  if (categoryId === UNCATEGORIZED_ID) {
+    // Implicit bucket: every channel with zero memberships, in sync order.
+    return Object.values(state.channels).filter((channel) => !state.memberships[channel.id]);
   }
-  for (const categoryId of state.categoryOrder) {
-    if (state.categories[categoryId]?.channelIds.includes(channelId)) {
-      return categoryId;
+  const category = state.categories[categoryId];
+  if (!category) {
+    return [];
+  }
+  const channels = category.channelIds.map((id) => state.channels[id]).filter(Boolean) as Channel[];
+  // Read-time invariant repair: members missing from the order array go last.
+  const orderedIds = new Set(category.channelIds);
+  for (const [channelId, categoryIds] of Object.entries(state.memberships)) {
+    if (categoryIds.includes(categoryId) && !orderedIds.has(channelId)) {
+      const channel = state.channels[channelId];
+      if (channel) {
+        channels.push(channel);
+      }
     }
   }
-  return undefined;
+  return channels;
 }
 
 export function upsertChannelToCategory(
@@ -294,6 +633,9 @@ export function upsertChannelToCategory(
   const normalized = normalizeChannel(incoming);
   if (!normalized.id) {
     return currentState;
+  }
+  if (categoryId !== UNCATEGORIZED_ID && !currentState.categories[categoryId]) {
+    throw new Error(`Category not found: ${categoryId}`);
   }
   const existing = findChannelByIdOrHandle(currentState, normalized.id, normalized.handle);
   const state = cloneState(currentState);
@@ -312,7 +654,13 @@ export function upsertChannelToCategory(
       discoveredAt: normalized.discoveredAt ?? now
     };
   }
-  return moveChannels(state, [channelId], categoryId);
+  if (categoryId === UNCATEGORIZED_ID) {
+    // "Assign to uncategorized" resets memberships entirely (implicit bucket).
+    clearMemberships(state, channelId);
+  } else {
+    addMembership(state, channelId, categoryId);
+  }
+  return state;
 }
 
 export interface CategorizedChannelImport {
@@ -349,6 +697,9 @@ export function importChannelsToCategories(
     return undefined;
   };
 
+  // Idempotent: every row *adds* a membership; the same channel may appear in
+  // several rows to join several categories. "未分类" rows reset the channel
+  // to zero memberships.
   for (const item of items) {
     let categoryId = findCategoryIdByName(item.categoryName);
     if (!categoryId) {
@@ -356,7 +707,7 @@ export function importChannelsToCategories(
       state = addCategory(state, {
         id: categoryId,
         name: item.categoryName.trim(),
-        color: PRESET_COLORS[state.categoryOrder.length % PRESET_COLORS.length],
+        color: nextCategoryColor(state),
         icon: "default"
       });
       createdCategories.push(item.categoryName.trim());
@@ -366,14 +717,6 @@ export function importChannelsToCategories(
   }
 
   return { state, importedCount, createdCategories };
-}
-
-export function getChannelsForCategory(state: ExtensionState, categoryId: string): Channel[] {
-  const channelIds =
-    categoryId === UNCATEGORIZED_ID
-      ? state.uncategorizedChannelIds
-      : state.categories[categoryId]?.channelIds ?? [];
-  return channelIds.map((id) => state.channels[id]).filter(Boolean);
 }
 
 const queryTokens = (query: string): string[] => query.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);
@@ -393,26 +736,29 @@ export function searchChannels(channels: Channel[], query: string): Channel[] {
 
 export interface ChannelSearchHit {
   channel: Channel;
-  categoryId: string;
-  categoryName: string;
+  categoryIds: string[];
+  categoryNames: string[];
 }
 
+/** Cross-category search deduplicated by channel; hits list all memberships. */
 export function searchAllChannels(state: ExtensionState, query: string): ChannelSearchHit[] {
   const tokens = queryTokens(query);
   if (tokens.length === 0) {
     return [];
   }
   const hits: ChannelSearchHit[] = [];
-  for (const categoryId of [UNCATEGORIZED_ID, ...state.categoryOrder]) {
-    const category = state.categories[categoryId];
-    if (!category) {
+  for (const channel of Object.values(state.channels)) {
+    if (!channelMatchesTokens(channel, tokens)) {
       continue;
     }
-    for (const channel of getChannelsForCategory(state, categoryId)) {
-      if (channelMatchesTokens(channel, tokens)) {
-        hits.push({ channel, categoryId, categoryName: category.name });
-      }
-    }
+    const categoryIds = getChannelCategoryIds(state, channel.id);
+    hits.push({
+      channel,
+      categoryIds,
+      categoryNames: categoryIds
+        .map((id) => state.categories[id]?.name)
+        .filter((name): name is string => Boolean(name))
+    });
   }
   return hits;
 }
@@ -472,26 +818,33 @@ export function applyLegacyImportIfNeeded(
     legacyData.channels.map((item) => [item.id, normalizeChannel(item)])
   );
   const categories: Record<string, Category> = {
-    [UNCATEGORIZED_ID]: cloneCategory(UNCATEGORIZED_CATEGORY)
+    [UNCATEGORIZED_ID]: { ...UNCATEGORIZED_CATEGORY, channelIds: [] }
   };
+  const memberships: Record<string, string[]> = {};
 
   for (const category of legacyData.categories) {
     const appearance = RECOVERED_CATEGORY_APPEARANCE[category.name.trim().toLocaleLowerCase()];
+    const orderedChannelIds = unique(category.channelIds).filter((id) => channels[id]);
     categories[category.id] = {
       id: category.id,
       name: category.name,
       color: appearance?.color ?? category.color,
       icon: appearance?.icon ?? category.icon,
-      channelIds: unique(category.channelIds).filter((id) => channels[id])
+      channelIds: orderedChannelIds
     };
+    for (const channelId of orderedChannelIds) {
+      memberships[channelId] = [...(memberships[channelId] ?? []), category.id];
+    }
   }
 
+  // Legacy "uncategorized" channels simply stay out of `memberships`.
   return {
     ...state,
+    schemaVersion: STATE_SCHEMA_VERSION,
     channels,
     categories,
     categoryOrder: legacyData.categories.map((category) => category.id),
-    uncategorizedChannelIds: unique(legacyData.uncategorizedChannelIds).filter((id) => channels[id]),
+    memberships,
     ui: {
       sidebarMode: "categorized",
       expandedCategoryIds: [UNCATEGORIZED_ID, ...legacyData.categories.map((category) => category.id)]
