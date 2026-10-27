@@ -52,6 +52,7 @@ import { collectNewnessChannelIds } from "./newness";
 import { renderSidebar, SIDEBAR_STYLES } from "./sidebar";
 import { applyTheme, isPageDark, resolveTheme, THEME_STYLES, watchPageTheme } from "./theme";
 import { readSubscriptionsFromPageSession } from "./session-bridge";
+import { navigateWithinYouTube } from "./spa-navigate";
 
 const ROOT_ID = "ytdlp-sidebar-root";
 const MANAGER_ROOT_ID = "ytdlp-manager-root";
@@ -198,7 +199,11 @@ const toggleSection = (categoryId: string) => {
 };
 
 const openChannel = (channel: Channel) => {
-  window.location.href = channel.url;
+  // window.location.href forces a full reload; drive YouTube's SPA router
+  // first and reload only when both soft paths fail (spa-navigate.ts).
+  void navigateWithinYouTube(channel).catch(() => {
+    window.location.href = channel.url;
+  });
 };
 
 const makeCategoryId = () => `cat-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;

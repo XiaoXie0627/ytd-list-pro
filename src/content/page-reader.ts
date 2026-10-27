@@ -4,6 +4,7 @@ import type { Channel } from "../shared/types";
 const MESSAGE_MARK = "YTD_LIST_PRO_SESSION_SYNC";
 const REQUEST_KIND = "request-subscriptions";
 const RESPONSE_KIND = "subscription-result";
+const NAVIGATE_KIND = "spa-navigate";
 const CLEANUP_KEY = "__YTD_LIST_PRO_PAGE_READER_CLEANUP__";
 const MAX_REQUESTS = 30;
 const SUBSCRIPTIONS_PAGE_ID = "FEchannels";
@@ -164,12 +165,40 @@ const readAllSubscriptions = async (): Promise<Channel[]> => {
 
 pageWindow[CLEANUP_KEY]?.();
 
+const isValidBrowseEndpoint = (endpoint: unknown): boolean => {
+  if (typeof endpoint !== "object" || endpoint === null) {
+    return false;
+  }
+  const browseEndpoint = (endpoint as { browseEndpoint?: unknown }).browseEndpoint;
+  return (
+    typeof browseEndpoint === "object" &&
+    browseEndpoint !== null &&
+    typeof (browseEndpoint as { browseId?: unknown }).browseId === "string"
+  );
+};
+
+// CustomEvent.detail stays null across isolated worlds, so the content script
+// delegates this dispatch into the MAIN world: firing YouTube's own
+// yt-navigate event makes the app render the endpoint without a page reload.
+const dispatchNavigate = (endpoint: unknown) => {
+  document.dispatchEvent(new CustomEvent("yt-navigate", { detail: { endpoint } }));
+};
+
 const handleRequest = (event: MessageEvent) => {
   if (event.source !== window) {
     return;
   }
   const data = event.data;
-  if (!data || data.marker !== MESSAGE_MARK || data.kind !== REQUEST_KIND || typeof data.requestId !== "string") {
+  if (!data || data.marker !== MESSAGE_MARK) {
+    return;
+  }
+  if (data.kind === NAVIGATE_KIND) {
+    if (isValidBrowseEndpoint(data.endpoint)) {
+      dispatchNavigate(data.endpoint);
+    }
+    return;
+  }
+  if (data.kind !== REQUEST_KIND || typeof data.requestId !== "string") {
     return;
   }
 
