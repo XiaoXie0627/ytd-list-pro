@@ -25,6 +25,8 @@
 - **Unlimited categories** — create categories with custom names, colors, and icons.
 - **Multi-membership** — a channel can belong to any number of categories at once; the sidebar shows it under every category it belongs to, and removing it from all of them returns it to Uncategorized.
 - **Native sidebar** — categories blend into the YouTube sidebar and can replace the long stock subscription list; switch back anytime.
+- **New-content dots** — in Categories mode, an orange dot next to a category title means some channel in it has new uploads. It mirrors YouTube's own "new content" dot and clears automatically when YouTube clears theirs.
+- **Light / dark themes** — the UI follows YouTube's appearance by default, or pin light / dark from the manager panel (dark is a warm orange-brown scheme, independent of YouTube's own dark look).
 - **Quick add** — an "add to category" button appears next to the subscribe button on watch and channel pages; it shows every category the channel currently belongs to — click to join, click again to leave.
 - **Global search** — search across all categories with multiple keywords in any order; results are deduplicated by channel and tagged with all their categories. The search box has a one-click ✕ clear.
 - **Bulk management** — multi-select channels and open a category picker from 添加 (Add) / 移动 (Move): Add ticks several categories at once (keeping existing memberships); Move makes the checked set the final memberships (unchecked ones are removed), with a one-click "remove from all categories" in move mode. Also per-membership removal via row badges, drag-and-drop with drop-target highlights, and flexible sorting.

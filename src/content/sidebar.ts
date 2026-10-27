@@ -9,6 +9,7 @@ export interface SidebarSection {
   icon: CategoryIconId;
   count: number;
   expanded: boolean;
+  hasNewness: boolean;
   channels: Channel[];
 }
 
@@ -116,7 +117,7 @@ export const createSvgIcon = (icon: CategoryIconId) => {
   return svg;
 };
 
-export function buildSidebarSections(state: ExtensionState): SidebarSection[] {
+export function buildSidebarSections(state: ExtensionState, newnessIds: ReadonlySet<string> = new Set()): SidebarSection[] {
   const expanded = new Set(state.ui.expandedCategoryIds);
   const uncategorized = state.categories[UNCATEGORIZED_ID];
   const uncategorizedChannels = getChannelsForCategory(state, UNCATEGORIZED_ID);
@@ -128,6 +129,7 @@ export function buildSidebarSections(state: ExtensionState): SidebarSection[] {
       icon: uncategorized.icon,
       count: uncategorizedChannels.length,
       expanded: expanded.has(UNCATEGORIZED_ID),
+      hasNewness: uncategorizedChannels.some((channel) => newnessIds.has(channel.id)),
       channels: uncategorizedChannels
     }
   ];
@@ -145,6 +147,7 @@ export function buildSidebarSections(state: ExtensionState): SidebarSection[] {
       icon: category.icon,
       count: channels.length,
       expanded: expanded.has(category.id),
+      hasNewness: channels.some((channel) => newnessIds.has(channel.id)),
       channels
     });
   }
@@ -172,7 +175,7 @@ const renderModeToggle = (state: ExtensionState, handlers: SidebarHandlers) => {
   return wrapper;
 };
 
-const renderChannel = (channel: Channel, handlers: SidebarHandlers) => {
+const renderChannel = (channel: Channel, handlers: SidebarHandlers, isFresh = false) => {
   const item = createElement("button", "ytdlp-channel");
   item.type = "button";
   item.title = channel.name;
@@ -192,13 +195,22 @@ const renderChannel = (channel: Channel, handlers: SidebarHandlers) => {
   } else {
     avatar.textContent = channelInitial(channel.name);
   }
+  if (isFresh) {
+    const dot = createElement("span", "ytdlp-channel-fresh");
+    dot.setAttribute("aria-hidden", "true");
+    avatar.append(dot);
+  }
 
   const label = createElement("span", "ytdlp-channel-label", channel.name);
   item.append(avatar, label);
   return item;
 };
 
-const renderSection = (section: SidebarSection, handlers: SidebarHandlers) => {
+const renderSection = (
+  section: SidebarSection,
+  handlers: SidebarHandlers,
+  newnessIds: ReadonlySet<string> = new Set()
+) => {
   const wrapper = createElement("div", "ytdlp-section");
   const header = createElement("button", "ytdlp-section-header");
   header.type = "button";
@@ -215,13 +227,19 @@ const renderSection = (section: SidebarSection, handlers: SidebarHandlers) => {
   );
   chevron.setAttribute("aria-hidden", "true");
 
-  header.append(icon, name, count, chevron);
+  if (section.hasNewness) {
+    const dot = createElement("span", "ytdlp-section-newness");
+    dot.setAttribute("aria-hidden", "true");
+    header.append(icon, name, dot, count, chevron);
+  } else {
+    header.append(icon, name, count, chevron);
+  }
   wrapper.append(header);
 
   if (section.expanded) {
     const channels = createElement("div", "ytdlp-section-channels");
     for (const channel of section.channels) {
-      channels.append(renderChannel(channel, handlers));
+      channels.append(renderChannel(channel, handlers, newnessIds.has(channel.id)));
     }
     wrapper.append(channels);
   }
@@ -229,7 +247,12 @@ const renderSection = (section: SidebarSection, handlers: SidebarHandlers) => {
   return wrapper;
 };
 
-export function renderSidebar(root: HTMLElement, state: ExtensionState, handlers: SidebarHandlers): void {
+export function renderSidebar(
+  root: HTMLElement,
+  state: ExtensionState,
+  handlers: SidebarHandlers,
+  newnessIds?: ReadonlySet<string>
+): void {
   root.replaceChildren();
   root.className = "ytdlp-sidebar-root";
   root.append(renderModeToggle(state, handlers));
@@ -239,8 +262,8 @@ export function renderSidebar(root: HTMLElement, state: ExtensionState, handlers
   }
 
   const sections = createElement("div", "ytdlp-sections");
-  for (const section of buildSidebarSections(state)) {
-    sections.append(renderSection(section, handlers));
+  for (const section of buildSidebarSections(state, newnessIds)) {
+    sections.append(renderSection(section, handlers, newnessIds));
   }
   root.append(sections);
 }
@@ -249,8 +272,11 @@ export const SIDEBAR_STYLES = `
 .ytdlp-sidebar-root {
   box-sizing: border-box;
   padding: 6px 12px 10px;
-  color: var(--yt-spec-text-primary, #0f0f0f);
+  color: var(--ytdlp-text);
   font-family: Roboto, Arial, sans-serif;
+  background: var(--ytdlp-panel);
+  border: 1px solid var(--ytdlp-panel-border);
+  border-radius: 12px;
 }
 .ytdlp-sidebar-controls {
   display: grid;
@@ -269,7 +295,7 @@ export const SIDEBAR_STYLES = `
   border: 0;
   border-radius: 8px;
   min-height: 32px;
-  background: var(--yt-spec-badge-chip-background, rgba(0, 0, 0, 0.05));
+  background: var(--ytdlp-chip);
   color: inherit;
   cursor: pointer;
   font: inherit;
@@ -277,11 +303,11 @@ export const SIDEBAR_STYLES = `
 }
 .ytdlp-sidebar-manage {
   padding: 0 9px;
-  color: var(--yt-spec-text-primary, #0f0f0f);
+  color: var(--ytdlp-text);
 }
 .ytdlp-sidebar-toggle button.is-active {
-  background: var(--yt-spec-text-primary, #0f0f0f);
-  color: var(--yt-spec-text-primary-inverse, #fff);
+  background: var(--ytdlp-accent);
+  color: var(--ytdlp-accent-contrast);
 }
 .ytdlp-section {
   margin: 2px 0;
@@ -301,13 +327,13 @@ export const SIDEBAR_STYLES = `
   text-align: left;
 }
 .ytdlp-section-header {
-  grid-template-columns: 24px minmax(0, 1fr) auto 14px;
+  grid-template-columns: 24px minmax(0, 1fr) auto auto 14px;
   gap: 8px;
   padding: 0 6px;
 }
 .ytdlp-section-header:hover,
 .ytdlp-channel:hover {
-  background: var(--yt-spec-badge-chip-background, rgba(0, 0, 0, 0.05));
+  background: var(--ytdlp-chip);
 }
 .ytdlp-section-icon {
   width: 22px;
@@ -329,11 +355,17 @@ export const SIDEBAR_STYLES = `
   white-space: nowrap;
 }
 .ytdlp-section-count {
-  color: var(--yt-spec-text-secondary, #606060);
+  color: var(--ytdlp-text-secondary);
   font-size: 12px;
 }
+.ytdlp-section-newness {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--ytdlp-newness, #ff9142);
+}
 .ytdlp-section-chevron {
-  color: var(--yt-spec-text-secondary, #606060);
+  color: var(--ytdlp-text-secondary);
   width: 14px;
   height: 14px;
   display: grid;
@@ -361,17 +393,26 @@ export const SIDEBAR_STYLES = `
 .ytdlp-channel-avatar {
   width: 24px;
   height: 24px;
-  border-radius: 50%;
-  overflow: hidden;
+  position: relative;
   display: grid;
   place-items: center;
-  background: var(--yt-spec-badge-chip-background, rgba(0, 0, 0, 0.05));
-  color: var(--yt-spec-text-secondary, #606060);
+  background: var(--ytdlp-chip);
+  color: var(--ytdlp-text-secondary);
   font-size: 11px;
 }
 .ytdlp-channel-avatar img {
   width: 100%;
   height: 100%;
   object-fit: cover;
+  border-radius: 50%;
+}
+.ytdlp-channel-fresh {
+  position: absolute;
+  top: -2px;
+  right: -2px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--ytdlp-newness, #ff9142);
 }
 `;

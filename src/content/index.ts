@@ -20,6 +20,7 @@ import {
   setManagerLayout,
   setManagerSortMode,
   setSidebarMode,
+  setThemePreference,
   toggleCategoryExpanded,
   toggleChannelPin,
   upsertChannelToCategory
@@ -34,7 +35,7 @@ import {
   restoreLegacyBackup,
   updateState
 } from "../shared/storage";
-import type { Channel, ChannelOrderZone, ChannelSortMode, ExtensionState, ManagerLayout, SidebarMode } from "../shared/types";
+import type { Channel, ChannelOrderZone, ChannelSortMode, ExtensionState, ManagerLayout, SidebarMode, ThemePreference } from "../shared/types";
 import { UNCATEGORIZED_ID } from "../shared/constants";
 import { buildCategoriesCsv, parseCategoriesCsv } from "../shared/transfer";
 import { parseSubscriptionsFromDocument } from "../shared/youtube-parser";
@@ -47,7 +48,9 @@ import {
   readPageChannel,
   renderQuickAdd
 } from "./quick-add";
+import { collectNewnessChannelIds } from "./newness";
 import { renderSidebar, SIDEBAR_STYLES } from "./sidebar";
+import { applyTheme, isPageDark, resolveTheme, THEME_STYLES, watchPageTheme } from "./theme";
 import { readSubscriptionsFromPageSession } from "./session-bridge";
 
 const ROOT_ID = "ytdlp-sidebar-root";
@@ -66,6 +69,8 @@ let guideObserver: MutationObserver | undefined;
 let managerOpen = false;
 let draggedCategoryId: string | undefined;
 let quickAddTimer: number | undefined;
+let newnessTimer: number | undefined;
+let lastNewnessKey: string | undefined;
 let activatedAccountId: string | undefined;
 
 // YouTube exposes a per-account DATASYNC_ID in inline page config; switching
@@ -123,7 +128,7 @@ const ensureStyles = () => {
   }
   const style = document.createElement("style");
   style.id = STYLE_ID;
-  style.textContent = `${SIDEBAR_STYLES}\n${MANAGER_STYLES}\n${QUICK_ADD_STYLES}`;
+  style.textContent = `${THEME_STYLES}\n${SIDEBAR_STYLES}\n${MANAGER_STYLES}\n${QUICK_ADD_STYLES}`;
   document.head.append(style);
 };
 
@@ -289,10 +294,50 @@ const scheduleQuickAddMount = () => {
   }, 300);
 };
 
+const newnessKey = (ids: ReadonlySet<string>): string => Array.from(ids).sort().join(",");
+
+// YouTube refreshes its own newness dots inside the hidden native list; mirror
+// them into the categorized sidebar, debounced. Re-render only when the
+// mirrored set actually changed — YouTube mutates its DOM constantly and our
+// own re-render feeds the observer, so rebuilding on every tick would loop
+// forever and keep resetting the avatars mid-load (0.5.0 regression: they
+// fell back to initials).
+const scheduleNewnessRefresh = () => {
+  if (newnessTimer !== undefined) {
+    window.clearTimeout(newnessTimer);
+  }
+  newnessTimer = window.setTimeout(() => {
+    newnessTimer = undefined;
+    if (!currentState || currentState.ui.sidebarMode !== "categorized") {
+      return;
+    }
+    const key = newnessKey(collectNewnessChannelIds(currentState));
+    if (key !== lastNewnessKey) {
+      lastNewnessKey = key;
+      mountSidebar(currentState);
+    }
+  }, 500);
+};
+
+const THEME_ROOT_IDS = [ROOT_ID, MANAGER_ROOT_ID, QUICK_ADD_ROOT_ID];
+
+// Re-resolve the theme (preference x page attribute) and stamp it on every
+// mounted UI root; the CSS tokens react to the root attribute, no re-render.
+const refreshTheme = () => {
+  const theme = resolveTheme(currentState?.ui.theme, isPageDark());
+  for (const id of THEME_ROOT_IDS) {
+    const root = document.getElementById(id);
+    if (root instanceof HTMLElement) {
+      applyTheme(root, theme);
+    }
+  }
+};
+
 const refreshViews = (state: ExtensionState) => {
   mountSidebar(state);
   mountManager(state);
   mountQuickAdd(state);
+  refreshTheme();
 };
 
 const mountSidebar = (state: ExtensionState) => {
@@ -303,12 +348,19 @@ const mountSidebar = (state: ExtensionState) => {
   ensureStyles();
   const root = getOrCreateRoot(container);
   syncOriginalListVisibility(state);
-  renderSidebar(root, state, {
-    onModeChange: saveMode,
-    onToggleCategory: toggleSection,
-    onOpenChannel: openChannel,
-    onOpenManager: openManager
-  });
+  const freshIds = collectNewnessChannelIds(state);
+  lastNewnessKey = newnessKey(freshIds);
+  renderSidebar(
+    root,
+    state,
+    {
+      onModeChange: saveMode,
+      onToggleCategory: toggleSection,
+      onOpenChannel: openChannel,
+      onOpenManager: openManager
+    },
+    freshIds
+  );
 };
 
 const scheduleMount = () => {
@@ -331,6 +383,7 @@ const addGuideObserver = () => {
       return;
     }
     scheduleQuickAddMount();
+    scheduleNewnessRefresh();
     const container = findGuideContainer();
     const root = document.getElementById(ROOT_ID);
     if (!container || root?.parentElement === container) {
@@ -388,6 +441,7 @@ function openManager() {
     managerUi.status = "准备就绪";
     managerUi.canRestoreLegacy = await computeCanRestoreLegacy();
     mountManager(currentState);
+    refreshTheme();
   });
 }
 
@@ -774,6 +828,12 @@ const managerHandlers = {
       currentState = await updateState((state) => setManagerLayout(state, layout));
     });
   },
+  onSetTheme(theme: ThemePreference) {
+    void safeAsync(async () => {
+      currentState = await updateState((state) => setThemePreference(state, theme));
+      refreshViews(currentState);
+    });
+  },
   onDragCategoryStart(categoryId: string) {
     draggedCategoryId = categoryId;
   },
@@ -864,6 +924,7 @@ const start = () => {
   const messageCleanup = addMessageListener();
   const storageCleanup = addStorageListener();
   const guideObserverCleanup = addGuideObserver();
+  const themeCleanup = watchPageTheme(refreshTheme);
   scheduleMount();
 
   (window as CleanupWindow)[CLEANUP_KEY] = () => {
@@ -871,6 +932,7 @@ const start = () => {
     messageCleanup();
     storageCleanup();
     guideObserverCleanup();
+    themeCleanup();
     if (mountTimer !== undefined) {
       window.clearTimeout(mountTimer);
     }
@@ -879,6 +941,9 @@ const start = () => {
     }
     if (flashClearTimer !== undefined) {
       window.clearTimeout(flashClearTimer);
+    }
+    if (newnessTimer !== undefined) {
+      window.clearTimeout(newnessTimer);
     }
     document.getElementById(ROOT_ID)?.remove();
     document.getElementById(MANAGER_ROOT_ID)?.remove();

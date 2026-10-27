@@ -216,8 +216,8 @@ export const QUICK_ADD_STYLES = `
   padding: 0 14px;
   border: none;
   border-radius: 18px;
-  background: var(--yt-spec-badge-chip-background, rgba(0, 0, 0, 0.05));
-  color: var(--yt-spec-text-primary, #0f0f0f);
+  background: var(--ytdlp-chip);
+  color: var(--ytdlp-text);
   font-size: 14px;
   font-weight: 500;
   line-height: 36px;
@@ -225,7 +225,7 @@ export const QUICK_ADD_STYLES = `
   cursor: pointer;
 }
 .ytdlp-quick-add-button:hover {
-  background: var(--yt-spec-button-chip-background-hover, rgba(0, 0, 0, 0.1));
+  background: var(--ytdlp-chip-hover);
 }
 .ytdlp-quick-add-plus {
   font-size: 17px;
@@ -241,8 +241,8 @@ export const QUICK_ADD_STYLES = `
   overflow-y: auto;
   padding: 6px;
   border-radius: 12px;
-  background: var(--yt-spec-menu-background, #fff);
-  border: 1px solid var(--yt-spec-10-percent-layer, rgba(0, 0, 0, 0.12));
+  background: var(--ytdlp-surface);
+  border: 1px solid var(--ytdlp-border);
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
 }
 .ytdlp-quick-add-item {
@@ -255,13 +255,13 @@ export const QUICK_ADD_STYLES = `
   border: none;
   border-radius: 8px;
   background: transparent;
-  color: var(--yt-spec-text-primary, #0f0f0f);
+  color: var(--ytdlp-text);
   font-size: 14px;
   text-align: left;
   cursor: pointer;
 }
 .ytdlp-quick-add-item:hover {
-  background: var(--yt-spec-badge-chip-background, rgba(0, 0, 0, 0.05));
+  background: var(--ytdlp-chip);
 }
 .ytdlp-quick-add-item-name {
   flex: 1;
@@ -271,11 +271,11 @@ export const QUICK_ADD_STYLES = `
   white-space: nowrap;
 }
 .ytdlp-quick-add-check {
-  color: var(--yt-spec-call-to-action, #065fd4);
+  color: var(--ytdlp-cta);
   font-weight: 700;
 }
 .ytdlp-quick-add-sep {
-  color: var(--yt-spec-text-secondary, #606060);
+  color: var(--ytdlp-text-secondary);
 }
 .ytdlp-quick-add-cat-icon {
   display: inline-flex;
@@ -294,9 +294,9 @@ export const QUICK_ADD_STYLES = `
 .ytdlp-quick-add-divider {
   height: 1px;
   margin: 6px 4px;
-  background: var(--yt-spec-10-percent-layer, rgba(0, 0, 0, 0.12));
+  background: var(--ytdlp-border);
 }
 .ytdlp-quick-add-item.is-manage {
-  color: var(--yt-spec-text-secondary, #606060);
+  color: var(--ytdlp-text-secondary);
 }
 `;

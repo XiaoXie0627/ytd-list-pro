@@ -22,6 +22,7 @@ import {
   setChannelCategories,
   setManagerLayout,
   setManagerSortMode,
+  setThemePreference,
   toggleChannelPin,
   upsertChannelToCategory
 } from "./state";
@@ -775,6 +776,47 @@ describe("manager ui preferences", () => {
 
     state = setManagerLayout(state, { drawerWidth: 720, drawerHeight: 600 });
     expect(state.ui.managerLayout).toEqual({ leftPaneWidth: 320, drawerWidth: 720, drawerHeight: 600 });
+  });
+});
+
+describe("setThemePreference", () => {
+  const setup = () => {
+    let state = createEmptyState();
+    state = mergeSubscriptions(state, [channel("UC-a"), channel("UC-b")], 1);
+    state = addCategory(state, { id: "cat-a", name: "A", color: "#111", icon: "default" });
+    return moveChannels(state, ["UC-a"], "cat-a");
+  };
+
+  it("stores the theme and never mutates the input state", () => {
+    const state = setup();
+    const themed = setThemePreference(state, "dark");
+
+    expect(themed.ui.theme).toBe("dark");
+    expect(state.ui.theme).toBeUndefined();
+  });
+
+  it("lets a later preference override an earlier one", () => {
+    let state = setThemePreference(setup(), "light");
+    expect(state.ui.theme).toBe("light");
+
+    state = setThemePreference(state, "auto");
+    expect(state.ui.theme).toBe("auto");
+  });
+
+  it("changes only ui.theme and keeps memberships, categories, and the rest of ui intact", () => {
+    const state = setup();
+    const themed = setThemePreference(state, "dark");
+
+    expect(themed.channels).toEqual(state.channels);
+    expect(themed.categories).toEqual(state.categories);
+    expect(themed.categoryOrder).toEqual(state.categoryOrder);
+    expect(themed.memberships).toEqual(state.memberships);
+    expect(themed.importedLegacyData).toBe(state.importedLegacyData);
+    expect(themed.lastSyncedAt).toBe(state.lastSyncedAt);
+    expect(themed.ui.sidebarMode).toBe(state.ui.sidebarMode);
+    expect(themed.ui.expandedCategoryIds).toEqual(state.ui.expandedCategoryIds);
+    expect(themed.ui.managerSortMode).toBe(state.ui.managerSortMode);
+    expect(themed.ui.managerLayout).toEqual(state.ui.managerLayout);
   });
 });
 

@@ -13,7 +13,8 @@ import type {
   ChannelOrderZone,
   ExtensionState,
   LegacyImportData,
-  ManagerLayout
+  ManagerLayout,
+  ThemePreference
 } from "./types";
 
 const unique = (items: string[]): string[] => Array.from(new Set(items));
@@ -40,7 +41,8 @@ const cloneState = (state: ExtensionState): ExtensionState => ({
     sidebarMode: state.ui.sidebarMode,
     expandedCategoryIds: [...state.ui.expandedCategoryIds],
     ...(state.ui.managerSortMode === undefined ? {} : { managerSortMode: state.ui.managerSortMode }),
-    ...(state.ui.managerLayout === undefined ? {} : { managerLayout: { ...state.ui.managerLayout } })
+    ...(state.ui.managerLayout === undefined ? {} : { managerLayout: { ...state.ui.managerLayout } }),
+    ...(state.ui.theme === undefined ? {} : { theme: state.ui.theme })
   }
 });
 
@@ -579,6 +581,12 @@ export function setManagerSortMode(
 export function setManagerLayout(currentState: ExtensionState, layout: Partial<ManagerLayout>): ExtensionState {
   const state = cloneState(currentState);
   state.ui.managerLayout = { ...state.ui.managerLayout, ...layout };
+  return state;
+}
+
+export function setThemePreference(currentState: ExtensionState, theme: ThemePreference): ExtensionState {
+  const state = cloneState(currentState);
+  state.ui.theme = theme;
   return state;
 }
 

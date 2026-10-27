@@ -123,6 +123,7 @@ const handlers = () => ({
   onTogglePin: vi.fn(),
   onReorderChannel: vi.fn(),
   onLayoutChange: vi.fn(),
+  onSetTheme: vi.fn(),
   onDragCategoryStart: vi.fn(),
   onDropOnCategory: vi.fn(),
   onDragChannelStart: vi.fn(),

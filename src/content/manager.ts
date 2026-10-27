@@ -12,7 +12,8 @@ import type {
   ChannelOrderZone,
   ChannelSortMode,
   ExtensionState,
-  ManagerLayout
+  ManagerLayout,
+  ThemePreference
 } from "../shared/types";
 import { createSvgIcon } from "./sidebar";
 
@@ -62,6 +63,7 @@ export type ManagerHandlers = {
   onTogglePin(channelId: string): void;
   onReorderChannel(channelId: string, zone: ChannelOrderZone, index: number): void;
   onLayoutChange(layout: Partial<ManagerLayout>): void;
+  onSetTheme(theme: ThemePreference): void;
   onDragCategoryStart(categoryId: string): void;
   onDropOnCategory(categoryId: string, event: DragEvent): void;
   onDragChannelStart(channelId: string, event: DragEvent): void;
@@ -83,6 +85,12 @@ const SORT_OPTIONS: Array<{ id: ChannelSortMode; label: string }> = [
   { id: "added-asc", label: "最早关注" },
   { id: "name-asc", label: "名称 A-Z" },
   { id: "name-desc", label: "名称 Z-A" }
+];
+
+const THEME_OPTIONS: Array<{ id: ThemePreference; label: string; title: string }> = [
+  { id: "auto", label: "自动", title: "跟随 YouTube 明暗" },
+  { id: "light", label: "亮", title: "始终亮色" },
+  { id: "dark", label: "暗", title: "始终暗色（橘色系）" }
 ];
 
 // HTML5 DnD can't read dataTransfer payload during dragover, so the channel
@@ -751,7 +759,16 @@ export function renderManager(
   repaint.type = "button";
   repaint.title = "按默认色板顺序重刷全部分类颜色（未分类保持灰色）";
   repaint.addEventListener("click", handlers.onRefreshColors);
-  leftHeaderActions.append(add, repaint);
+  const themeToggle = createElement("div", "ytdlp-manager-theme-toggle");
+  const currentTheme: ThemePreference = state.ui.theme ?? "auto";
+  for (const item of THEME_OPTIONS) {
+    const option = createElement("button", item.id === currentTheme ? "is-active" : "", item.label);
+    option.type = "button";
+    option.title = item.title;
+    option.addEventListener("click", () => handlers.onSetTheme(item.id));
+    themeToggle.append(option);
+  }
+  leftHeaderActions.append(themeToggle, add, repaint);
   leftHeader.append(leftHeaderActions);
   left.append(leftHeader, renderCategoryList(rows, currentCategory.id, handlers, ui.flashCategoryId));
 
@@ -969,7 +986,7 @@ export const MANAGER_STYLES = `
   inset: 0;
   z-index: 2147483646;
   pointer-events: none;
-  color: var(--yt-spec-text-primary, #0f0f0f);
+  color: var(--ytdlp-text);
   font-family: Roboto, Arial, sans-serif;
 }
 .ytdlp-manager-shell {
@@ -977,7 +994,7 @@ export const MANAGER_STYLES = `
   inset: 0;
   display: flex;
   justify-content: flex-end;
-  background: rgba(0, 0, 0, 0.18);
+  background: var(--ytdlp-backdrop);
   pointer-events: auto;
 }
 .ytdlp-manager-drawer {
@@ -987,8 +1004,8 @@ export const MANAGER_STYLES = `
   margin: 16px 16px 16px 0;
   display: grid;
   grid-template-rows: minmax(0, 1fr);
-  background: var(--yt-spec-base-background, #fff);
-  border: 1px solid var(--yt-spec-10-percent-layer, rgba(0, 0, 0, 0.12));
+  background: var(--ytdlp-surface);
+  border: 1px solid var(--ytdlp-border);
   border-radius: 12px;
   box-shadow: 0 12px 36px rgba(0, 0, 0, 0.22);
   overflow: hidden;
@@ -1022,7 +1039,7 @@ export const MANAGER_STYLES = `
 .ytdlp-manager-summary p,
 .ytdlp-manager-status,
 .ytdlp-manager-channel small {
-  color: var(--yt-spec-text-secondary, #606060);
+  color: var(--ytdlp-text-secondary);
   font-size: 12px;
 }
 .ytdlp-manager-layout {
@@ -1048,11 +1065,11 @@ export const MANAGER_STYLES = `
   margin: 12px 0;
   border-radius: 4px;
   cursor: col-resize;
-  background: var(--yt-spec-10-percent-layer, rgba(0, 0, 0, 0.06));
+  background: var(--ytdlp-chip);
 }
 .ytdlp-manager-splitter:hover,
 .ytdlp-manager-splitter:active {
-  background: var(--yt-spec-10-percent-layer, rgba(0, 0, 0, 0.12));
+  background: var(--ytdlp-chip-hover);
 }
 .ytdlp-manager-resize {
   position: absolute;
@@ -1102,20 +1119,20 @@ export const MANAGER_STYLES = `
 .ytdlp-manager-category.is-active,
 .ytdlp-manager-channel.is-selected {
   border-color: transparent;
-  background: var(--yt-spec-badge-chip-background, rgba(0, 0, 0, 0.08));
+  background: var(--ytdlp-chip-strong);
 }
 .ytdlp-manager-category:hover,
 .ytdlp-manager-channel:hover {
-  background: var(--yt-spec-badge-chip-background, rgba(0, 0, 0, 0.05));
+  background: var(--ytdlp-chip);
 }
 .ytdlp-manager-channel.is-pinned {
-  background: var(--yt-spec-badge-chip-background, rgba(0, 0, 0, 0.08));
+  background: var(--ytdlp-chip-strong);
 }
 .ytdlp-manager-pin {
-  color: var(--yt-spec-text-secondary, #606060);
+  color: var(--ytdlp-text-secondary);
 }
 .ytdlp-manager-pin.is-active {
-  color: var(--yt-spec-icon-active, #065fd4);
+  color: var(--ytdlp-cta);
 }
 .ytdlp-manager-pin.is-active [data-icon="pin"] {
   fill: currentColor;
@@ -1146,7 +1163,7 @@ export const MANAGER_STYLES = `
   white-space: nowrap;
 }
 .ytdlp-manager-category-count {
-  color: var(--yt-spec-text-secondary, #606060);
+  color: var(--ytdlp-text-secondary);
   font-size: 12px;
 }
 .ytdlp-manager-restore {
@@ -1156,8 +1173,8 @@ export const MANAGER_STYLES = `
   gap: 10px;
   padding: 10px 12px;
   border-radius: 10px;
-  background: var(--yt-spec-badge-chip-background, rgba(255, 196, 0, 0.12));
-  border: 1px solid var(--yt-spec-10-percent-layer, rgba(0, 0, 0, 0.12));
+  background: var(--ytdlp-chip);
+  border: 1px solid var(--ytdlp-border);
   font-size: 13px;
 }
 .ytdlp-manager-restore-button {
@@ -1174,8 +1191,8 @@ export const MANAGER_STYLES = `
   gap: 4px;
   padding: 1px 6px;
   border-radius: 8px;
-  background: var(--yt-spec-badge-chip-background, rgba(0, 0, 0, 0.05));
-  color: var(--yt-spec-text-secondary, #606060);
+  background: var(--ytdlp-chip);
+  color: var(--ytdlp-text-secondary);
   font-size: 11px;
   font-weight: 400;
   line-height: 18px;
@@ -1197,7 +1214,7 @@ export const MANAGER_STYLES = `
   cursor: pointer;
 }
 .ytdlp-manager-badge-remove:hover {
-  color: #dc2626;
+  color: var(--ytdlp-danger);
 }
 .ytdlp-manager-category-actions {
   display: flex;
@@ -1214,7 +1231,7 @@ export const MANAGER_STYLES = `
   min-height: 36px;
   border: 1px solid transparent;
   border-radius: 18px;
-  background: var(--yt-spec-badge-chip-background, rgba(0, 0, 0, 0.05));
+  background: var(--ytdlp-chip);
   color: inherit;
   font: inherit;
   cursor: pointer;
@@ -1225,13 +1242,13 @@ export const MANAGER_STYLES = `
   font-weight: 500;
 }
 .ytdlp-manager-primary {
-  background: var(--yt-spec-text-primary, #0f0f0f);
-  color: var(--yt-spec-text-primary-inverse, #fff);
+  background: var(--ytdlp-accent);
+  color: var(--ytdlp-accent-contrast);
 }
 .ytdlp-manager-secondary:hover,
 .ytdlp-manager-icon-button:hover,
 .ytdlp-manager-check:hover {
-  background: var(--yt-spec-10-percent-layer, rgba(0, 0, 0, 0.1));
+  background: var(--ytdlp-chip-hover);
 }
 .ytdlp-manager-icon-button {
   width: 36px;
@@ -1240,16 +1257,16 @@ export const MANAGER_STYLES = `
   padding: 0;
 }
 .ytdlp-manager-icon-button.is-danger:hover {
-  color: #dc2626;
-  background: #fee2e2;
+  color: var(--ytdlp-danger);
+  background: var(--ytdlp-danger-soft);
 }
 .ytdlp-manager-search {
   min-width: 160px;
   flex: 1;
   padding: 0 14px;
   cursor: text;
-  background: var(--yt-spec-base-background, #fff);
-  border-color: var(--yt-spec-10-percent-layer, rgba(0, 0, 0, 0.12));
+  background: var(--ytdlp-surface);
+  border-color: var(--ytdlp-border);
 }
 .ytdlp-manager-sort {
   min-width: 118px;
@@ -1268,7 +1285,7 @@ export const MANAGER_STYLES = `
   min-height: 58px;
   padding: 7px 8px;
   border-radius: 0;
-  border-bottom-color: var(--yt-spec-10-percent-layer, rgba(0, 0, 0, 0.1));
+  border-bottom-color: var(--ytdlp-border);
   background: transparent;
 }
 .ytdlp-manager-channel.has-pin {
@@ -1278,10 +1295,10 @@ export const MANAGER_STYLES = `
   width: 24px;
   height: 24px;
   min-height: 24px;
-  border: 2px solid var(--yt-spec-call-to-action, #065fd4);
+  border: 2px solid var(--ytdlp-cta);
   border-radius: 4px;
   background: transparent;
-  color: var(--yt-spec-call-to-action, #065fd4);
+  color: var(--ytdlp-cta);
   font-weight: 800;
 }
 .ytdlp-manager-avatar {
@@ -1291,8 +1308,8 @@ export const MANAGER_STYLES = `
   place-items: center;
   overflow: hidden;
   border-radius: 50%;
-  background: var(--yt-spec-badge-chip-background, rgba(0, 0, 0, 0.08));
-  color: var(--yt-spec-text-secondary, #606060);
+  background: var(--ytdlp-chip-strong);
+  color: var(--ytdlp-text-secondary);
   font-weight: 800;
 }
 .ytdlp-manager-avatar img {
@@ -1311,7 +1328,7 @@ export const MANAGER_STYLES = `
   display: grid;
   place-items: center;
   padding: 24px;
-  background: rgba(0, 0, 0, 0.24);
+  background: var(--ytdlp-backdrop-strong);
   pointer-events: auto;
 }
 .ytdlp-manager-editor {
@@ -1320,10 +1337,10 @@ export const MANAGER_STYLES = `
   display: grid;
   gap: 13px;
   overflow: auto;
-  border: 1px solid var(--yt-spec-10-percent-layer, rgba(0, 0, 0, 0.12));
+  border: 1px solid var(--ytdlp-border);
   border-radius: 12px;
   padding: 16px;
-  background: var(--yt-spec-base-background, #fff);
+  background: var(--ytdlp-surface);
   box-shadow: 0 18px 48px rgba(0, 0, 0, 0.24);
 }
 .ytdlp-manager-field,
@@ -1333,16 +1350,16 @@ export const MANAGER_STYLES = `
 }
 .ytdlp-manager-field input {
   height: 36px;
-  border: 1px solid var(--yt-spec-10-percent-layer, rgba(0, 0, 0, 0.12));
+  border: 1px solid var(--ytdlp-border);
   border-radius: 6px;
   padding: 0 10px;
   color: inherit;
-  background: var(--yt-spec-base-background, #fff);
+  background: var(--ytdlp-surface);
 }
 .ytdlp-manager-label,
 .ytdlp-manager-field span,
 .ytdlp-manager-custom-color span {
-  color: var(--yt-spec-text-secondary, #606060);
+  color: var(--ytdlp-text-secondary);
   font-size: 12px;
   font-weight: 700;
 }
@@ -1351,7 +1368,7 @@ export const MANAGER_STYLES = `
   display: flex;
   align-items: center;
   gap: 10px;
-  border: 1px solid var(--yt-spec-10-percent-layer, rgba(0, 0, 0, 0.12));
+  border: 1px solid var(--ytdlp-border);
   border-radius: 8px;
   padding: 8px;
 }
@@ -1381,12 +1398,12 @@ export const MANAGER_STYLES = `
   width: 34px;
   height: 28px;
   padding: 0;
-  border: 1px solid var(--yt-spec-10-percent-layer, rgba(0, 0, 0, 0.12));
+  border: 1px solid var(--ytdlp-border);
   border-radius: 8px;
   background: transparent;
 }
 .ytdlp-manager-custom-color code {
-  color: var(--yt-spec-text-secondary, #606060);
+  color: var(--ytdlp-text-secondary);
 }
 .ytdlp-manager-icon-choice {
   min-width: 0;
@@ -1394,7 +1411,7 @@ export const MANAGER_STYLES = `
   display: flex;
   align-items: center;
   gap: 6px;
-  border: 1px solid var(--yt-spec-10-percent-layer, rgba(0, 0, 0, 0.12));
+  border: 1px solid var(--ytdlp-border);
   border-radius: 8px;
   background: transparent;
   color: inherit;
@@ -1433,8 +1450,8 @@ export const MANAGER_STYLES = `
   padding: 0;
   border: none;
   border-radius: 50%;
-  background: var(--yt-spec-10-percent-layer, rgba(0, 0, 0, 0.1));
-  color: var(--yt-spec-text-secondary, #606060);
+  background: var(--ytdlp-chip-hover);
+  color: var(--ytdlp-text-secondary);
   font: inherit;
   font-size: 14px;
   line-height: 1;
@@ -1444,14 +1461,14 @@ export const MANAGER_STYLES = `
   display: inline-grid;
 }
 .ytdlp-manager-search-clear:hover {
-  background: var(--yt-spec-10-percent-layer, rgba(0, 0, 0, 0.18));
+  background: var(--ytdlp-layer);
 }
 .ytdlp-manager-category {
   position: relative;
 }
 .ytdlp-manager-category.is-drop-target {
-  border-color: var(--yt-spec-call-to-action, #065fd4);
-  background: rgba(6, 95, 212, 0.1);
+  border-color: var(--ytdlp-cta);
+  background: var(--ytdlp-cta-soft);
 }
 .ytdlp-manager-category.is-drop-target .ytdlp-manager-category-actions {
   visibility: hidden;
@@ -1465,8 +1482,8 @@ export const MANAGER_STYLES = `
   z-index: 1;
   padding: 2px 10px;
   border-radius: 999px;
-  background: var(--yt-spec-call-to-action, #065fd4);
-  color: #fff;
+  background: var(--ytdlp-cta);
+  color: var(--ytdlp-cta-contrast);
   font-size: 12px;
   white-space: nowrap;
   pointer-events: none;
@@ -1479,8 +1496,8 @@ export const MANAGER_STYLES = `
 }
 @keyframes ytdlp-drop-flash {
   0% {
-    background: rgba(6, 95, 212, 0.28);
-    border-color: var(--yt-spec-call-to-action, #065fd4);
+    background: var(--ytdlp-cta-soft);
+    border-color: var(--ytdlp-cta);
   }
   100% {
     background: transparent;
@@ -1493,16 +1510,16 @@ export const MANAGER_STYLES = `
   display: grid;
   grid-template-rows: auto auto minmax(0, 1fr) auto;
   gap: 12px;
-  border: 1px solid var(--yt-spec-10-percent-layer, rgba(0, 0, 0, 0.12));
+  border: 1px solid var(--ytdlp-border);
   border-radius: 12px;
   padding: 16px;
-  background: var(--yt-spec-base-background, #fff);
+  background: var(--ytdlp-surface);
   box-shadow: 0 18px 48px rgba(0, 0, 0, 0.24);
   outline: none;
 }
 .ytdlp-manager-picker-sub {
   margin: -6px 0 0;
-  color: var(--yt-spec-text-secondary, #606060);
+  color: var(--ytdlp-text-secondary);
   font-size: 12px;
 }
 .ytdlp-manager-picker-list {
@@ -1522,13 +1539,13 @@ export const MANAGER_STYLES = `
   cursor: pointer;
 }
 .ytdlp-manager-picker-row:hover {
-  background: var(--yt-spec-badge-chip-background, rgba(0, 0, 0, 0.05));
+  background: var(--ytdlp-chip);
 }
 .ytdlp-manager-picker-row input[type="checkbox"] {
   width: 16px;
   height: 16px;
   flex: none;
-  accent-color: var(--yt-spec-call-to-action, #065fd4);
+  accent-color: var(--ytdlp-cta);
 }
 .ytdlp-manager-picker-row.is-locked {
   cursor: default;
@@ -1548,7 +1565,7 @@ export const MANAGER_STYLES = `
 }
 .ytdlp-manager-picker-note {
   flex: none;
-  color: var(--yt-spec-text-secondary, #606060);
+  color: var(--ytdlp-text-secondary);
   font-size: 12px;
 }
 .ytdlp-manager-picker-actions {
@@ -1566,25 +1583,25 @@ export const MANAGER_STYLES = `
 .ytdlp-manager-picker-clear {
   min-height: 36px;
   padding: 0 14px;
-  border: 1px solid #dc2626;
+  border: 1px solid var(--ytdlp-danger);
   border-radius: 18px;
   background: transparent;
-  color: #dc2626;
+  color: var(--ytdlp-danger);
   font: inherit;
   font-size: 13px;
   font-weight: 500;
   cursor: pointer;
 }
 .ytdlp-manager-picker-clear:hover {
-  background: #fee2e2;
+  background: var(--ytdlp-danger-soft);
 }
 .ytdlp-manager-picker-confirm {
   min-height: 36px;
   padding: 0 16px;
   border: none;
   border-radius: 18px;
-  background: var(--yt-spec-text-primary, #0f0f0f);
-  color: var(--yt-spec-text-primary-inverse, #fff);
+  background: var(--ytdlp-accent);
+  color: var(--ytdlp-accent-contrast);
   font: inherit;
   font-weight: 500;
   cursor: pointer;
@@ -1598,6 +1615,30 @@ export const MANAGER_STYLES = `
   filter: none;
 }
 .ytdlp-manager-picker-confirm.is-danger {
-  background: #dc2626;
+  background: var(--ytdlp-danger);
+}
+.ytdlp-manager-theme-toggle {
+  display: inline-grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 2px;
+  padding: 2px;
+  border-radius: 18px;
+  background: var(--ytdlp-chip);
+}
+.ytdlp-manager-theme-toggle button {
+  min-height: 28px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 14px;
+  background: transparent;
+  color: var(--ytdlp-text-secondary);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.ytdlp-manager-theme-toggle button.is-active {
+  background: var(--ytdlp-accent);
+  color: var(--ytdlp-accent-contrast);
 }
 `;

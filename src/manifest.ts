@@ -3,7 +3,7 @@ import { AVATAR_HOST_PERMISSIONS } from "./shared/avatar";
 export const manifest: chrome.runtime.ManifestV3 = {
   manifest_version: 3,
   name: "YTD List Pro",
-  version: "0.4.0",
+  version: "0.5.0",
   description: "Organize YouTube subscriptions into visual categories.",
   permissions: ["storage", "tabs", "scripting"],
   host_permissions: ["https://www.youtube.com/*", ...AVATAR_HOST_PERMISSIONS],

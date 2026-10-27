@@ -50,6 +50,10 @@ export type SidebarMode = "original" | "categorized";
 
 export type ChannelSortMode = "added-desc" | "added-asc" | "name-asc" | "name-desc" | "manual";
 
+// "auto" follows YouTube's own light/dark (html[dark]); explicit values force
+// a theme. Absent from stored state = "auto".
+export type ThemePreference = "auto" | "light" | "dark";
+
 export interface ExtensionState {
   schemaVersion: number;
   channels: Record<string, Channel>;
@@ -64,6 +68,7 @@ export interface ExtensionState {
     // Remembered manager sort mode; absent states fall back to "manual".
     managerSortMode?: ChannelSortMode;
     managerLayout?: ManagerLayout;
+    theme?: ThemePreference;
   };
   importedLegacyData: boolean;
   lastSyncedAt?: number;

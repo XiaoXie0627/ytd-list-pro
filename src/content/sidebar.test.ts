@@ -84,4 +84,49 @@ describe("buildSidebarSections", () => {
     button?.click();
     expect(opened).toBe(true);
   });
+
+  it("flags categories with new content and renders one aggregate dot per flagged title", () => {
+    let state = createEmptyState();
+    state = mergeSubscriptions(
+      state,
+      [
+        { id: "UC-a", name: "A", url: "https://www.youtube.com/channel/UC-a" },
+        { id: "UC-b", name: "B", url: "https://www.youtube.com/channel/UC-b" }
+      ],
+      1
+    );
+    state = addCategory(state, { id: "cat-code", name: "Code", color: "#22c55e", icon: "code" });
+    state = moveChannels(state, ["UC-a"], "cat-code");
+    state = toggleCategoryExpanded(state, "cat-code");
+    const newnessIds = new Set(["UC-a"]);
+
+    const sections = buildSidebarSections(state, newnessIds);
+
+    expect(sections.map((section) => [section.id, section.hasNewness])).toEqual([
+      [UNCATEGORIZED_ID, false],
+      ["cat-code", true]
+    ]);
+
+    const root = document.createElement("div");
+    renderSidebar(
+      root,
+      state,
+      {
+        onModeChange: () => undefined,
+        onOpenChannel: () => undefined,
+        onOpenManager: () => undefined,
+        onToggleCategory: () => undefined
+      },
+      newnessIds
+    );
+
+    const sectionDot = root.querySelectorAll(".ytdlp-section-newness");
+    expect(sectionDot.length).toBe(1);
+    expect(sectionDot[0]?.getAttribute("aria-hidden")).toBe("true");
+
+    // Official-style per-channel dot: only on the fresh channel's avatar.
+    const channelDots = root.querySelectorAll(".ytdlp-channel-fresh");
+    expect(channelDots.length).toBe(1);
+    expect(channelDots[0]?.closest(".ytdlp-channel")?.getAttribute("title")).toBe("A");
+  });
 });
