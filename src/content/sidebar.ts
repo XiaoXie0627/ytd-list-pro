@@ -331,7 +331,7 @@ export const SIDEBAR_STYLES = `
   text-align: left;
 }
 .ytdlp-section-header {
-  grid-template-columns: 24px minmax(0, 1fr) 14px auto auto;
+  grid-template-columns: 24px minmax(0, 1fr) 14px 16px 8px;
   gap: 8px;
   padding: 0 6px;
 }
@@ -361,6 +361,7 @@ export const SIDEBAR_STYLES = `
 .ytdlp-section-count {
   color: var(--ytdlp-text-secondary);
   font-size: 12px;
+  justify-self: center;
 }
 .ytdlp-section-newness {
   width: 8px;
