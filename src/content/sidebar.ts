@@ -195,14 +195,15 @@ const renderChannel = (channel: Channel, handlers: SidebarHandlers, isFresh = fa
   } else {
     avatar.textContent = channelInitial(channel.name);
   }
-  if (isFresh) {
-    const dot = createElement("span", "ytdlp-channel-fresh");
-    dot.setAttribute("aria-hidden", "true");
-    avatar.append(dot);
-  }
-
   const label = createElement("span", "ytdlp-channel-label", channel.name);
   item.append(avatar, label);
+  if (isFresh) {
+    // Mirrors YouTube's #newness-dot: last child of the guide entry, at the
+    // line end after the title — not a badge stuck on the avatar.
+    const dot = createElement("span", "ytdlp-channel-fresh");
+    dot.setAttribute("aria-hidden", "true");
+    item.append(dot);
+  }
   return item;
 };
 
@@ -227,12 +228,15 @@ const renderSection = (
   );
   chevron.setAttribute("aria-hidden", "true");
 
+  // YouTube guide-entry order: title → arrow → count → newness dot. Keeping
+  // the dot as the line-end element puts it in the same trailing column as
+  // the channel dots below — aggregate and per-channel dots align vertically.
   if (section.hasNewness) {
     const dot = createElement("span", "ytdlp-section-newness");
     dot.setAttribute("aria-hidden", "true");
-    header.append(icon, name, dot, count, chevron);
+    header.append(icon, name, chevron, count, dot);
   } else {
-    header.append(icon, name, count, chevron);
+    header.append(icon, name, chevron, count);
   }
   wrapper.append(header);
 
@@ -327,7 +331,7 @@ export const SIDEBAR_STYLES = `
   text-align: left;
 }
 .ytdlp-section-header {
-  grid-template-columns: 24px minmax(0, 1fr) auto auto 14px;
+  grid-template-columns: 24px minmax(0, 1fr) 14px auto auto;
   gap: 8px;
   padding: 0 6px;
 }
@@ -386,14 +390,13 @@ export const SIDEBAR_STYLES = `
   padding-left: 8px;
 }
 .ytdlp-channel {
-  grid-template-columns: 28px minmax(0, 1fr);
+  grid-template-columns: 28px minmax(0, 1fr) auto;
   gap: 8px;
   padding: 0 6px;
 }
 .ytdlp-channel-avatar {
   width: 24px;
   height: 24px;
-  position: relative;
   display: grid;
   place-items: center;
   background: var(--ytdlp-chip);
@@ -407,9 +410,6 @@ export const SIDEBAR_STYLES = `
   border-radius: 50%;
 }
 .ytdlp-channel-fresh {
-  position: absolute;
-  top: -2px;
-  right: -2px;
   width: 8px;
   height: 8px;
   border-radius: 50%;

@@ -123,10 +123,15 @@ describe("buildSidebarSections", () => {
     const sectionDot = root.querySelectorAll(".ytdlp-section-newness");
     expect(sectionDot.length).toBe(1);
     expect(sectionDot[0]?.getAttribute("aria-hidden")).toBe("true");
+    // Line-end element like the channel dot, so both share a trailing column.
+    expect(sectionDot[0]).toBe(sectionDot[0]?.parentElement?.lastElementChild);
+    expect(sectionDot[0]?.previousElementSibling?.className).toBe("ytdlp-section-count");
 
-    // Official-style per-channel dot: only on the fresh channel's avatar.
+    // Official-style line-end dot: only on the fresh channel's row, appended
+    // last like YouTube's #newness-dot inside ytd-guide-entry-renderer.
     const channelDots = root.querySelectorAll(".ytdlp-channel-fresh");
     expect(channelDots.length).toBe(1);
     expect(channelDots[0]?.closest(".ytdlp-channel")?.getAttribute("title")).toBe("A");
+    expect(channelDots[0]).toBe(channelDots[0]?.parentElement?.lastElementChild);
   });
 });
